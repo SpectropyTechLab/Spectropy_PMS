@@ -18,12 +18,24 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeft,
@@ -32,11 +44,15 @@ import {
   Clock,
   Calendar,
   CheckCircle2,
+  ChevronDown,
   Paperclip,
   ListChecks,
   History,
   Trash2,
   Edit,
+  Filter,
+  ArrowUpDown,
+  X,
   Copy,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -53,8 +69,7 @@ import { motion } from "framer-motion";
 import { useUpload } from "@/hooks/use-upload";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
-import { NewTaskDialog } from "@/components/project-board/NewTaskDialog";
-import { EditTaskDialog } from "@/components/project-board/EditTaskDialog";
+import { TaskDialog } from "@/components/project-board/TaskDialog";
 import { TaskHistoryDialog } from "@/components/project-board/TaskHistoryDialog";
 
 interface BucketWithTasks extends Bucket {
@@ -94,12 +109,20 @@ export default function ProjectBoard() {
   const [selectedBucketId, setSelectedBucketId] = useState<number | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
+  const [newTaskStatus, setNewTaskStatus] = useState("todo");
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
   const [newTaskAssignees, setNewTaskAssignees] = useState<number[]>([]);
   const [newTaskStartDate, setNewTaskStartDate] = useState("");
   const [newTaskEndDate, setNewTaskEndDate] = useState("");
   const [newTaskEstimateHours, setNewTaskEstimateHours] = useState(0);
   const [newTaskEstimateMinutes, setNewTaskEstimateMinutes] = useState(0);
+  const [newTaskChecklist, setNewTaskChecklist] = useState<ChecklistItem[]>(
+    [],
+  );
+  const [newTaskAttachments, setNewTaskAttachments] = useState<Attachment[]>(
+    [],
+  );
+  const [newTaskChecklistItem, setNewTaskChecklistItem] = useState("");
   const [newBucketTitle, setNewBucketTitle] = useState("");
   const [editingBucketId, setEditingBucketId] = useState<number | null>(null);
   const [editingBucketTitle, setEditingBucketTitle] = useState("");
@@ -119,22 +142,14 @@ export default function ProjectBoard() {
     [],
   );
   const [newChecklistItem, setNewChecklistItem] = useState("");
+  const [taskSearch, setTaskSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [dueDateFilter, setDueDateFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("newest");
 
-  const { uploadFile, isUploading } = useUpload({
-    onSuccess: (response) => {
-      if (editingTask) {
-        const newAttachment: Attachment = {
-          id: crypto.randomUUID(),
-          name: response.metadata.name,
-          url: response.objectPath,
-          type: response.metadata.contentType,
-          size: response.metadata.size,
-          uploadedAt: new Date().toISOString(),
-        };
-        setEditTaskAttachments([...editTaskAttachments, newAttachment]);
-      }
-    },
-  });
+  const { uploadFile, isUploading } = useUpload();
   const [expandedBuckets, setExpandedBuckets] = useState<Record<number, boolean>>({});
 
   const { data: project, isLoading: projectLoading } = useQuery<Project>({
@@ -177,7 +192,34 @@ export default function ProjectBoard() {
     mutationFn: async ({ id, ...data }: Partial<Task> & { id: number }) => {
       return apiRequest("PATCH", `/api/tasks/${id}`, data);
     },
-    onSuccess: () => {
+    onMutate: async (updates) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/tasks", projectId] });
+      const previousTasks = queryClient.getQueryData<Task[]>([
+        "/api/tasks",
+        projectId,
+      ]);
+
+      queryClient.setQueryData<Task[]>(
+        ["/api/tasks", projectId],
+        (current) => {
+          if (!current) return current;
+          return current.map((task) =>
+            task.id === updates.id ? { ...task, ...updates } : task,
+          );
+        },
+      );
+
+      return { previousTasks };
+    },
+    onError: (_error, _updates, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(
+          ["/api/tasks", projectId],
+          context.previousTasks,
+        );
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks", projectId] });
     },
   });
@@ -230,12 +272,16 @@ export default function ProjectBoard() {
   const resetNewTaskForm = () => {
     setNewTaskTitle("");
     setNewTaskDescription("");
+    setNewTaskStatus("todo");
     setNewTaskPriority("medium");
     setNewTaskAssignees([]);
     setNewTaskStartDate("");
     setNewTaskEndDate("");
     setNewTaskEstimateHours(0);
     setNewTaskEstimateMinutes(0);
+    setNewTaskChecklist([]);
+    setNewTaskAttachments([]);
+    setNewTaskChecklistItem("");
   };
 
   const handleSaveBucketTitle = (bucketId: number) => {
@@ -264,6 +310,143 @@ export default function ProjectBoard() {
       deleteBucketMutation.mutate(bucket.id);
     }
   };
+
+  const getTaskAssigneeIds = (task: Task): number[] => {
+    if (task.assignedUsers && task.assignedUsers.length > 0) {
+      return task.assignedUsers;
+    }
+    return task.assigneeId ? [task.assigneeId] : [];
+  };
+
+  const resetTaskFilters = () => {
+    setTaskSearch("");
+    setStatusFilter("all");
+    setPriorityFilter("all");
+    setAssigneeFilter("all");
+    setDueDateFilter("all");
+    setSortBy("newest");
+  };
+
+  const normalizedSearch = taskSearch.trim().toLowerCase();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const nextSevenDays = new Date(today);
+  nextSevenDays.setDate(today.getDate() + 7);
+
+  const filteredTasks = tasks.filter((task) => {
+    const matchesSearch = normalizedSearch
+      ? `${task.title} ${task.description ?? ""}`
+        .toLowerCase()
+        .includes(normalizedSearch)
+      : true;
+
+    const matchesStatus =
+      statusFilter === "all" || task.status === statusFilter;
+    const matchesPriority =
+      priorityFilter === "all" || task.priority === priorityFilter;
+
+    const assigneeIds = getTaskAssigneeIds(task);
+    const matchesAssignee = (() => {
+      if (assigneeFilter === "all") return true;
+      if (assigneeFilter === "me") {
+        return currentUserId ? assigneeIds.includes(currentUserId) : false;
+      }
+      if (assigneeFilter === "unassigned") {
+        return assigneeIds.length === 0;
+      }
+      const selectedId = Number(assigneeFilter);
+      return assigneeIds.includes(selectedId);
+    })();
+
+    const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+    const matchesDueDate = (() => {
+      if (dueDateFilter === "all") return true;
+      if (dueDateFilter === "overdue") {
+        return dueDate ? dueDate < today : false;
+      }
+      if (dueDateFilter === "next7") {
+        return dueDate ? dueDate >= today && dueDate <= nextSevenDays : false;
+      }
+      if (dueDateFilter === "nodate") {
+        return !dueDate;
+      }
+      return true;
+    })();
+
+    return (
+      matchesSearch &&
+      matchesStatus &&
+      matchesPriority &&
+      matchesAssignee &&
+      matchesDueDate
+    );
+  });
+
+  const sortTasks = (list: Task[]) => {
+    const priorityRank: Record<string, number> = {
+      high: 3,
+      medium: 2,
+      low: 1,
+    };
+
+    const compareDates = (a?: Date | null, b?: Date | null) => {
+      if (!a && !b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.getTime() - b.getTime();
+    };
+
+    return [...list].sort((a, b) => {
+      switch (sortBy) {
+        case "oldest":
+          return a.id - b.id;
+        case "priority":
+          return (priorityRank[b.priority] ?? 0) - (priorityRank[a.priority] ?? 0);
+        case "dueDate": {
+          const result = compareDates(
+            a.dueDate ? new Date(a.dueDate) : null,
+            b.dueDate ? new Date(b.dueDate) : null,
+          );
+          return result || b.id - a.id;
+        }
+        case "startDate": {
+          const result = compareDates(
+            a.startDate ? new Date(a.startDate) : null,
+            b.startDate ? new Date(b.startDate) : null,
+          );
+          return result || b.id - a.id;
+        }
+        case "title":
+          return a.title.localeCompare(b.title);
+        case "estimate": {
+          const aEstimate = (a.estimateHours || 0) * 60 + (a.estimateMinutes || 0);
+          const bEstimate = (b.estimateHours || 0) * 60 + (b.estimateMinutes || 0);
+          return bEstimate - aEstimate || b.id - a.id;
+        }
+        case "newest":
+        default:
+          return b.id - a.id;
+      }
+    });
+  };
+
+  const sortLabels: Record<string, string> = {
+    newest: "Newest",
+    oldest: "Oldest",
+    priority: "Priority",
+    dueDate: "Due date",
+    startDate: "Start date",
+    title: "Title",
+    estimate: "Estimate",
+  };
+
+  const hasActiveFilters =
+    normalizedSearch.length > 0 ||
+    statusFilter !== "all" ||
+    priorityFilter !== "all" ||
+    assigneeFilter !== "all" ||
+    dueDateFilter !== "all" ||
+    sortBy !== "newest";
 
   const bucketsWithTasks: BucketWithTasks[] = buckets.map((bucket) => ({
     ...bucket,
@@ -312,7 +495,7 @@ export default function ProjectBoard() {
       assigneeId: newTaskAssignees[0] || undefined,
       assignedUsers: newTaskAssignees,
       position: maxPosition + 1,
-      status: "todo",
+      status: newTaskStatus,
       startDate: newTaskStartDate
         ? new Date(newTaskStartDate + "T12:00:00")
         : null,
@@ -320,8 +503,8 @@ export default function ProjectBoard() {
       estimateHours: newTaskEstimateHours,
       estimateMinutes: newTaskEstimateMinutes,
       history: [createHistoryEntry("Created")],
-      checklist: [],
-      attachments: [],
+      checklist: newTaskChecklist,
+      attachments: newTaskAttachments,
     });
   };
 
@@ -493,6 +676,7 @@ export default function ProjectBoard() {
   const handleStatusChange = async (task: Task, newStatus: string) => {
     const isCompletion = newStatus === "completed";
     const canComplete = canCompleteTask || isAssignedToTask(task);
+    console.log(isAssignedToTask(task));
 
     if (isCompletion && !canComplete) {
       toast({
@@ -527,38 +711,6 @@ export default function ProjectBoard() {
         createHistoryEntry(`Status changed to ${statusLabel}`),
       ],
     });
-
-    if (newStatus === "completed" && buckets) {
-      const currentBucketIndex = buckets.findIndex(
-        (b) => b.id === task.bucketId,
-      );
-      const nextBucket = buckets[currentBucketIndex + 1];
-
-      if (nextBucket) {
-        const newTaskData = {
-          title: task.title,
-          description: task.description || "",
-          priority: task.priority,
-          projectId: task.projectId,
-          bucketId: nextBucket.id,
-          assigneeId: task.assigneeId,
-          assignedUsers: task.assignedUsers || [],
-          startDate: task.startDate,
-          dueDate: task.dueDate,
-          estimateHours: task.estimateHours || 0,
-          estimateMinutes: task.estimateMinutes || 0,
-          checklist: [],
-          attachments: [],
-          history: [
-            createHistoryEntry(
-              `Auto-created from completed task in ${buckets[currentBucketIndex]?.title || "previous bucket"}`,
-            ),
-          ],
-        };
-
-        createTaskMutation.mutate(newTaskData);
-      }
-    }
   };
 
   const getStatusLabel = (status: string) => {
@@ -615,72 +767,54 @@ export default function ProjectBoard() {
         ),
       ],
     });
-
-    if (completed && buckets) {
-      const currentBucketIndex = buckets.findIndex(
-        (b) => b.id === task.bucketId,
-      );
-      const nextBucket = buckets[currentBucketIndex + 1];
-
-      if (nextBucket) {
-        const newTaskData = {
-          title: task.title,
-          description: task.description || "",
-          priority: task.priority,
-          projectId: task.projectId,
-          bucketId: nextBucket.id,
-          assigneeId: task.assigneeId,
-          assignedUsers: task.assignedUsers || [],
-          startDate: task.startDate,
-          dueDate: task.dueDate,
-          estimateHours: task.estimateHours || 0,
-          estimateMinutes: task.estimateMinutes || 0,
-          checklist: [],
-          attachments: [],
-          history: [
-            createHistoryEntry(
-              `Auto-created from completed task in ${buckets[currentBucketIndex]?.title || "previous bucket"}`,
-            ),
-          ],
-        };
-
-        createTaskMutation.mutate(newTaskData);
-      }
-    }
   };
 
-  const handleAddChecklistItem = () => {
-    if (!newChecklistItem.trim()) return;
+  const addChecklistItem = (
+    checklistItem: string,
+    setChecklistItem: Dispatch<SetStateAction<string>>,
+    setChecklist: Dispatch<SetStateAction<ChecklistItem[]>>,
+  ) => {
+    if (!checklistItem.trim()) return;
     const item: ChecklistItem = {
       id: crypto.randomUUID(),
-      title: newChecklistItem,
+      title: checklistItem,
       completed: false,
     };
-    setEditTaskChecklist([...editTaskChecklist, item]);
-    setNewChecklistItem("");
+    setChecklist((current) => [...current, item]);
+    setChecklistItem("");
   };
 
-  const handleToggleChecklistItem = (itemId: string) => {
-    setEditTaskChecklist(
-      editTaskChecklist.map((item) =>
+  const toggleChecklistItem = (
+    itemId: string,
+    setChecklist: Dispatch<SetStateAction<ChecklistItem[]>>,
+  ) => {
+    setChecklist((current) =>
+      current.map((item) =>
         item.id === itemId ? { ...item, completed: !item.completed } : item,
       ),
     );
   };
 
-  const handleRemoveChecklistItem = (itemId: string) => {
-    setEditTaskChecklist(
-      editTaskChecklist.filter((item) => item.id !== itemId),
+  const removeChecklistItem = (
+    itemId: string,
+    setChecklist: Dispatch<SetStateAction<ChecklistItem[]>>,
+  ) => {
+    setChecklist((current) => current.filter((item) => item.id !== itemId));
+  };
+
+  const removeAttachment = (
+    attachmentId: string,
+    setAttachments: Dispatch<SetStateAction<Attachment[]>>,
+  ) => {
+    setAttachments((current) =>
+      current.filter((att) => att.id !== attachmentId),
     );
   };
 
-  const handleRemoveAttachment = (attachmentId: string) => {
-    setEditTaskAttachments(
-      editTaskAttachments.filter((att) => att.id !== attachmentId),
-    );
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setAttachments: Dispatch<SetStateAction<Attachment[]>>,
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -689,7 +823,22 @@ export default function ProjectBoard() {
       return;
     }
 
-    await uploadFile(file);
+    const response = await uploadFile(file);
+    if (!response) {
+      e.target.value = "";
+      return;
+    }
+
+    const newAttachment: Attachment = {
+      id: crypto.randomUUID(),
+      name: response.metadata.name,
+      url: response.objectPath,
+      type: response.metadata.contentType,
+      size: response.metadata.size,
+      uploadedAt: new Date().toISOString(),
+    };
+
+    setAttachments((current) => [...current, newAttachment]);
     e.target.value = "";
   };
 
@@ -719,11 +868,7 @@ export default function ProjectBoard() {
   };
 
   const getAssignees = (task: Task) => {
-    const assigneeIds = task.assignedUsers?.length
-      ? task.assignedUsers
-      : task.assigneeId
-        ? [task.assigneeId]
-        : [];
+    const assigneeIds = getTaskAssigneeIds(task);
     return users.filter((u) => assigneeIds.includes(u.id));
   };
 
@@ -786,6 +931,158 @@ export default function ProjectBoard() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="button-filter-tasks">
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-4" align="start">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Search
+                  </label>
+                  <Input
+                    placeholder="Search tasks..."
+                    value={taskSearch}
+                    onChange={(e) => setTaskSearch(e.target.value)}
+                    className="mt-2"
+                    data-testid="input-task-search"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Status
+                  </label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="mt-2" data-testid="select-filter-status">
+                      <SelectValue placeholder="All status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All status</SelectItem>
+                      <SelectItem value="todo">Not Started</SelectItem>
+                      <SelectItem value="in_progress">In Progress</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Priority
+                  </label>
+                  <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                    <SelectTrigger className="mt-2" data-testid="select-filter-priority">
+                      <SelectValue placeholder="All priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All priority</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Assigned To
+                  </label>
+                  <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                    <SelectTrigger className="mt-2" data-testid="select-filter-assignee">
+                      <SelectValue placeholder="All assignees" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All assignees</SelectItem>
+                      <SelectItem value="me">Assigned to me</SelectItem>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {users.map((user) => (
+                        <SelectItem key={user.id} value={String(user.id)}>
+                          {user.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Due Date
+                  </label>
+                  <Select value={dueDateFilter} onValueChange={setDueDateFilter}>
+                    <SelectTrigger className="mt-2" data-testid="select-filter-due-date">
+                      <SelectValue placeholder="All due dates" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All due dates</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                      <SelectItem value="next7">Due in 7 days</SelectItem>
+                      <SelectItem value="nodate">No due date</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  onClick={resetTaskFilters}
+                  data-testid="button-clear-task-filters"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Clear filters
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="button-sort-tasks">
+                <ArrowUpDown className="h-4 w-4 mr-2" />
+                Sort: {sortLabels[sortBy] ?? "Newest"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setSortBy("newest")}>
+                Newest
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("oldest")}>
+                Oldest
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("priority")}>
+                Priority
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("dueDate")}>
+                Due date
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("startDate")}>
+                Start date
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("estimate")}>
+                Estimate
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy("title")}>
+                Title
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetTaskFilters}
+              data-testid="button-reset-task-filters"
+            >
+              Reset
+            </Button>
+          )}
+        </div>
+
         <Dialog open={isNewBucketOpen} onOpenChange={setIsNewBucketOpen}>
           <DialogTrigger asChild>
             <Button
@@ -831,13 +1128,16 @@ export default function ProjectBoard() {
           style={{ minWidth: "max-content" }}
         >
           {bucketsWithTasks.map((bucket) => {
-            const activeTasks = bucket.tasks
-              .filter((t) => t.status !== "completed")
-              .sort((a, b) => b.id - a.id); // Sort by newest ID first
-
-            const completedTasks = bucket.tasks
-              .filter((t) => t.status === "completed")
-              .sort((a, b) => b.id - a.id);
+            const bucketFilteredTasks = filteredTasks.filter(
+              (task) => task.bucketId === bucket.id,
+            );
+            const sortedTasks = sortTasks(bucketFilteredTasks);
+            const activeTasks = sortedTasks.filter(
+              (t) => t.status !== "completed",
+            );
+            const completedTasks = sortedTasks.filter(
+              (t) => t.status === "completed",
+            );
 
             const isExpanded = expandedBuckets[bucket.id] ?? false;
             return (
@@ -879,7 +1179,9 @@ export default function ProjectBoard() {
                       </h3>
                     )}
                     <Badge variant="secondary" className="text-xs">
-                      {bucket.tasks.length}
+                      {hasActiveFilters
+                        ? `${bucketFilteredTasks.length}/${bucket.tasks.length}`
+                        : bucket.tasks.length}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-1">
@@ -984,13 +1286,14 @@ export default function ProjectBoard() {
                   >
                     {(() => {
                       // 1. Logic to Sort and Split Tasks
-                      const activeTasks = bucket.tasks
-                        .filter((t) => t.status !== "completed")
-                        .sort((a, b) => b.id - a.id); // Sorted by creation (ID proxy)
+                      const sortedTasks = sortTasks(bucketFilteredTasks);
+                      const activeTasks = sortedTasks.filter(
+                        (t) => t.status !== "completed",
+                      );
 
-                      const completedTasks = bucket.tasks
-                        .filter((t) => t.status === "completed")
-                        .sort((a, b) => b.id - a.id);
+                      const completedTasks = sortedTasks.filter(
+                        (t) => t.status === "completed",
+                      );
 
                       const isExpanded = expandedBuckets[bucket.id] ?? false;
 
@@ -1322,66 +1625,104 @@ export default function ProjectBoard() {
         </div>
       </div>
 
-      <NewTaskDialog
+      <TaskDialog
+        mode="new"
         open={isNewTaskOpen}
         onOpenChange={setIsNewTaskOpen}
-        newTaskTitle={newTaskTitle}
-        setNewTaskTitle={setNewTaskTitle}
-        newTaskDescription={newTaskDescription}
-        setNewTaskDescription={setNewTaskDescription}
-        newTaskPriority={newTaskPriority}
-        setNewTaskPriority={setNewTaskPriority}
-        newTaskAssignees={newTaskAssignees}
-        setNewTaskAssignees={setNewTaskAssignees}
-        newTaskStartDate={newTaskStartDate}
-        setNewTaskStartDate={setNewTaskStartDate}
-        newTaskEndDate={newTaskEndDate}
-        setNewTaskEndDate={setNewTaskEndDate}
-        newTaskEstimateHours={newTaskEstimateHours}
-        setNewTaskEstimateHours={setNewTaskEstimateHours}
-        newTaskEstimateMinutes={newTaskEstimateMinutes}
-        setNewTaskEstimateMinutes={setNewTaskEstimateMinutes}
+        status={newTaskStatus}
+        setStatus={setNewTaskStatus}
+        title={newTaskTitle}
+        setTitle={setNewTaskTitle}
+        description={newTaskDescription}
+        setDescription={setNewTaskDescription}
+        priority={newTaskPriority}
+        setPriority={setNewTaskPriority}
+        assignees={newTaskAssignees}
+        setAssignees={setNewTaskAssignees}
+        startDate={newTaskStartDate}
+        setStartDate={setNewTaskStartDate}
+        endDate={newTaskEndDate}
+        setEndDate={setNewTaskEndDate}
+        estimateHours={newTaskEstimateHours}
+        setEstimateHours={setNewTaskEstimateHours}
+        estimateMinutes={newTaskEstimateMinutes}
+        setEstimateMinutes={setNewTaskEstimateMinutes}
+        checklist={newTaskChecklist}
+        newChecklistItem={newTaskChecklistItem}
+        setNewChecklistItem={setNewTaskChecklistItem}
+        attachments={newTaskAttachments}
         users={users}
         toggleAssignee={toggleAssignee}
+        onToggleChecklistItem={(itemId) =>
+          toggleChecklistItem(itemId, setNewTaskChecklist)
+        }
+        onRemoveChecklistItem={(itemId) =>
+          removeChecklistItem(itemId, setNewTaskChecklist)
+        }
+        onAddChecklistItem={() =>
+          addChecklistItem(
+            newTaskChecklistItem,
+            setNewTaskChecklistItem,
+            setNewTaskChecklist,
+          )
+        }
+        onRemoveAttachment={(attachmentId) =>
+          removeAttachment(attachmentId, setNewTaskAttachments)
+        }
+        onFileUpload={(event) => handleFileUpload(event, setNewTaskAttachments)}
+        isUploading={isUploading}
         onSubmit={handleAddTask}
         isSubmitting={createTaskMutation.isPending}
       />
 
-      <EditTaskDialog
+      <TaskDialog
+        mode="edit"
         open={isEditTaskOpen}
         onOpenChange={setIsEditTaskOpen}
-        editTaskStatus={editTaskStatus}
-        setEditTaskStatus={setEditTaskStatus}
-        editTaskTitle={editTaskTitle}
-        setEditTaskTitle={setEditTaskTitle}
-        editTaskDescription={editTaskDescription}
-        setEditTaskDescription={setEditTaskDescription}
-        editTaskPriority={editTaskPriority}
-        setEditTaskPriority={setEditTaskPriority}
-        editTaskAssignees={editTaskAssignees}
-        setEditTaskAssignees={setEditTaskAssignees}
-        editTaskStartDate={editTaskStartDate}
-        setEditTaskStartDate={setEditTaskStartDate}
-        editTaskEndDate={editTaskEndDate}
-        setEditTaskEndDate={setEditTaskEndDate}
-        editTaskEstimateHours={editTaskEstimateHours}
-        setEditTaskEstimateHours={setEditTaskEstimateHours}
-        editTaskEstimateMinutes={editTaskEstimateMinutes}
-        setEditTaskEstimateMinutes={setEditTaskEstimateMinutes}
-        editTaskChecklist={editTaskChecklist}
+        status={editTaskStatus}
+        setStatus={setEditTaskStatus}
+        title={editTaskTitle}
+        setTitle={setEditTaskTitle}
+        description={editTaskDescription}
+        setDescription={setEditTaskDescription}
+        priority={editTaskPriority}
+        setPriority={setEditTaskPriority}
+        assignees={editTaskAssignees}
+        setAssignees={setEditTaskAssignees}
+        startDate={editTaskStartDate}
+        setStartDate={setEditTaskStartDate}
+        endDate={editTaskEndDate}
+        setEndDate={setEditTaskEndDate}
+        estimateHours={editTaskEstimateHours}
+        setEstimateHours={setEditTaskEstimateHours}
+        estimateMinutes={editTaskEstimateMinutes}
+        setEstimateMinutes={setEditTaskEstimateMinutes}
+        checklist={editTaskChecklist}
         newChecklistItem={newChecklistItem}
         setNewChecklistItem={setNewChecklistItem}
-        editTaskAttachments={editTaskAttachments}
+        attachments={editTaskAttachments}
         users={users}
         toggleAssignee={toggleAssignee}
-        onToggleChecklistItem={handleToggleChecklistItem}
-        onRemoveChecklistItem={handleRemoveChecklistItem}
-        onAddChecklistItem={handleAddChecklistItem}
-        onRemoveAttachment={handleRemoveAttachment}
-        onFileUpload={handleFileUpload}
+        onToggleChecklistItem={(itemId) =>
+          toggleChecklistItem(itemId, setEditTaskChecklist)
+        }
+        onRemoveChecklistItem={(itemId) =>
+          removeChecklistItem(itemId, setEditTaskChecklist)
+        }
+        onAddChecklistItem={() =>
+          addChecklistItem(
+            newChecklistItem,
+            setNewChecklistItem,
+            setEditTaskChecklist,
+          )
+        }
+        onRemoveAttachment={(attachmentId) =>
+          removeAttachment(attachmentId, setEditTaskAttachments)
+        }
+        onFileUpload={(event) => handleFileUpload(event, setEditTaskAttachments)}
         isUploading={isUploading}
-        onSave={handleSaveEditTask}
-        isSaving={updateTaskMutation.isPending}
+        onSubmit={handleSaveEditTask}
+        isSubmitting={updateTaskMutation.isPending}
       />
 
       <TaskHistoryDialog

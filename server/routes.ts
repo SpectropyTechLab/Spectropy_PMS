@@ -51,6 +51,18 @@ function getCurrentUserId(req: import("express").Request): number {
   return 2;
 }
 
+function createHistoryEntry(
+  action: string,
+  user?: { id: number; name: string } | null,
+) {
+  return {
+    action,
+    userId: user?.id ?? null,
+    userName: user?.name ?? null,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
@@ -408,8 +420,6 @@ export async function registerRoutes(
       const project = await storage.getProject(task.projectId);
 
       if (project) {
-        const isCompletion =
-          input.status === "completed" && existingTask?.status !== "completed";
         const isNewAssignment =
           input.assigneeId && input.assigneeId !== existingTask?.assigneeId;
 
@@ -484,6 +494,51 @@ export async function registerRoutes(
               });
             }
           }
+        }
+      }
+
+      if (isCompletion && task.bucketId) {
+        try {
+          const buckets = await storage.getBuckets(task.projectId);
+          const currentBucketIndex = buckets.findIndex(
+            (bucket) => bucket.id === task.bucketId,
+          );
+          const nextBucket =
+            currentBucketIndex >= 0 ? buckets[currentBucketIndex + 1] : undefined;
+
+          if (nextBucket) {
+            const nextBucketTasks = await storage.getTasksByBucket(nextBucket.id);
+            const maxPosition = nextBucketTasks.reduce(
+              (max, current) => Math.max(max, current.position),
+              -1,
+            );
+
+            await storage.createTask({
+              title: task.title,
+              description: task.description ?? undefined,
+              status: "todo",
+              priority: task.priority,
+              projectId: task.projectId,
+              bucketId: nextBucket.id,
+              assigneeId: null,
+              assignedUsers: [],
+              startDate: null,
+              dueDate: null,
+              estimateHours: 0,
+              estimateMinutes: 0,
+              position: maxPosition + 1,
+              checklist: [],
+              attachments: task.attachments || [],
+              history: [
+                createHistoryEntry(
+                  `Auto-created from completed task in ${buckets[currentBucketIndex]?.title || "previous bucket"}`,
+                  currentUser,
+                ),
+              ],
+            });
+          }
+        } catch (err) {
+          console.error("Failed to auto-create next task:", err);
         }
       }
 

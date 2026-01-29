@@ -27,6 +27,10 @@ export const historyEntrySchema = z.object({
 });
 
 export const historyItemSchema = z.union([z.string(), historyEntrySchema]);
+const nullableDateSchema = z.preprocess(
+  (value) => (value === "" || value === null ? null : value),
+  z.union([z.null(), z.coerce.date()]),
+);
 
 export type ChecklistItem = z.infer<typeof checklistItemSchema>;
 export type Attachment = z.infer<typeof attachmentSchema>;
@@ -161,8 +165,8 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true }).ext
 export const insertProjectSchema = createInsertSchema(projects).omit({ id: true });
 export const insertBucketSchema = createInsertSchema(buckets).omit({ id: true });
 export const insertTaskSchema = createInsertSchema(tasks).omit({ id: true, createdAt: true }).extend({
-  startDate: z.union([z.coerce.date(), z.null()]).optional(),
-  dueDate: z.union([z.coerce.date(), z.null()]).optional(),
+  startDate: nullableDateSchema.optional(),
+  dueDate: nullableDateSchema.optional(),
   assignedUsers: z.array(z.number()).optional().default([]),
   checklist: z.array(checklistItemSchema).optional().default([]),
   attachments: z.array(attachmentSchema).optional().default([]),
