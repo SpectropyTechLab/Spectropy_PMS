@@ -1,15 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { downloadAttachment } from "../hooks/use-download";
 
 import {
   Dialog,
@@ -21,24 +18,12 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeft,
@@ -46,21 +31,12 @@ import {
   MoreHorizontal,
   Clock,
   Calendar,
-  User as UserIcon,
-  GripVertical,
   CheckCircle2,
   Paperclip,
   ListChecks,
   History,
   Trash2,
   Edit,
-  Upload,
-  X,
-  FileText,
-  Image,
-  File,
-  Users,
-  ChevronDown,
   Copy,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -77,6 +53,9 @@ import { motion } from "framer-motion";
 import { useUpload } from "@/hooks/use-upload";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
+import { NewTaskDialog } from "@/components/project-board/NewTaskDialog";
+import { EditTaskDialog } from "@/components/project-board/EditTaskDialog";
+import { TaskHistoryDialog } from "@/components/project-board/TaskHistoryDialog";
 
 interface BucketWithTasks extends Bucket {
   tasks: Task[];
@@ -716,7 +695,7 @@ export default function ProjectBoard() {
   const toggleAssignee = (
     userId: number,
     assignees: number[],
-    setAssignees: (a: number[]) => void,
+    setAssignees: Dispatch<SetStateAction<number[]>>,
   ) => {
     if (assignees.includes(userId)) {
       setAssignees(assignees.filter((id) => id !== userId));
@@ -755,13 +734,6 @@ export default function ProjectBoard() {
       total: checklist.length,
       percentage: Math.round((completed / checklist.length) * 100),
     };
-  };
-
-  const getFileIcon = (type: string) => {
-    if (type.startsWith("image/")) return <Image className="h-4 w-4" />;
-    if (type.includes("pdf") || type.includes("document"))
-      return <FileText className="h-4 w-4" />;
-    return <File className="h-4 w-4" />;
   };
 
   if (projectLoading || bucketsLoading) {
@@ -1280,529 +1252,73 @@ export default function ProjectBoard() {
         </div>
       </div>
 
-      {/* New Task Dialog */}
-      <Dialog open={isNewTaskOpen} onOpenChange={setIsNewTaskOpen}>
-        <DialogContent className="max-w-lg w-[95vw] sm:w-full max-h-[90vh] overflow-scroll flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Add New Task</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4 flex-1 overflow-y-auto">
-            <Input
-              placeholder="Task title..."
-              value={newTaskTitle}
-              onChange={(e) => setNewTaskTitle(e.target.value)}
-              data-testid="input-task-title"
-            />
-            <Textarea
-              placeholder="Description (optional)..."
-              value={newTaskDescription}
-              onChange={(e) => setNewTaskDescription(e.target.value)}
-              data-testid="input-task-description"
-            />
-            <Select value={newTaskPriority} onValueChange={setNewTaskPriority}>
-              <SelectTrigger data-testid="select-task-priority">
-                <SelectValue placeholder="Priority" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-              </SelectContent>
-            </Select>
+      <NewTaskDialog
+        open={isNewTaskOpen}
+        onOpenChange={setIsNewTaskOpen}
+        newTaskTitle={newTaskTitle}
+        setNewTaskTitle={setNewTaskTitle}
+        newTaskDescription={newTaskDescription}
+        setNewTaskDescription={setNewTaskDescription}
+        newTaskPriority={newTaskPriority}
+        setNewTaskPriority={setNewTaskPriority}
+        newTaskAssignees={newTaskAssignees}
+        setNewTaskAssignees={setNewTaskAssignees}
+        newTaskStartDate={newTaskStartDate}
+        setNewTaskStartDate={setNewTaskStartDate}
+        newTaskEndDate={newTaskEndDate}
+        setNewTaskEndDate={setNewTaskEndDate}
+        newTaskEstimateHours={newTaskEstimateHours}
+        setNewTaskEstimateHours={setNewTaskEstimateHours}
+        newTaskEstimateMinutes={newTaskEstimateMinutes}
+        setNewTaskEstimateMinutes={setNewTaskEstimateMinutes}
+        users={users}
+        toggleAssignee={toggleAssignee}
+        onSubmit={handleAddTask}
+        isSubmitting={createTaskMutation.isPending}
+      />
 
-            <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                <Users className="h-4 w-4 inline mr-2" />
-                Assign Users
-              </label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-between"
-                    data-testid="button-assign-users-new"
-                  >
-                    <span className="truncate">
-                      {newTaskAssignees.length === 0
-                        ? "Select users..."
-                        : `${newTaskAssignees.length} user${newTaskAssignees.length > 1 ? "s" : ""} selected`}
-                    </span>
-                    <ChevronDown className="h-4 w-4 ml-2 flex-shrink-0" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-2" align="start">
-                  <div className="space-y-1">
-                    {users.map((user) => (
-                      <div
-                        key={user.id}
-                        className="flex items-center gap-2 p-2 rounded hover-elevate cursor-pointer"
-                        onClick={() =>
-                          toggleAssignee(
-                            user.id,
-                            newTaskAssignees,
-                            setNewTaskAssignees,
-                          )
-                        }
-                      >
-                        <Checkbox
-                          checked={newTaskAssignees.includes(user.id)}
-                          onCheckedChange={() =>
-                            toggleAssignee(
-                              user.id,
-                              newTaskAssignees,
-                              setNewTaskAssignees,
-                            )
-                          }
-                        />
-                        <span className="text-sm">{user.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
+      <EditTaskDialog
+        open={isEditTaskOpen}
+        onOpenChange={setIsEditTaskOpen}
+        editTaskStatus={editTaskStatus}
+        setEditTaskStatus={setEditTaskStatus}
+        editTaskTitle={editTaskTitle}
+        setEditTaskTitle={setEditTaskTitle}
+        editTaskDescription={editTaskDescription}
+        setEditTaskDescription={setEditTaskDescription}
+        editTaskPriority={editTaskPriority}
+        setEditTaskPriority={setEditTaskPriority}
+        editTaskAssignees={editTaskAssignees}
+        setEditTaskAssignees={setEditTaskAssignees}
+        editTaskStartDate={editTaskStartDate}
+        setEditTaskStartDate={setEditTaskStartDate}
+        editTaskEndDate={editTaskEndDate}
+        setEditTaskEndDate={setEditTaskEndDate}
+        editTaskEstimateHours={editTaskEstimateHours}
+        setEditTaskEstimateHours={setEditTaskEstimateHours}
+        editTaskEstimateMinutes={editTaskEstimateMinutes}
+        setEditTaskEstimateMinutes={setEditTaskEstimateMinutes}
+        editTaskChecklist={editTaskChecklist}
+        newChecklistItem={newChecklistItem}
+        setNewChecklistItem={setNewChecklistItem}
+        editTaskAttachments={editTaskAttachments}
+        users={users}
+        toggleAssignee={toggleAssignee}
+        onToggleChecklistItem={handleToggleChecklistItem}
+        onRemoveChecklistItem={handleRemoveChecklistItem}
+        onAddChecklistItem={handleAddChecklistItem}
+        onRemoveAttachment={handleRemoveAttachment}
+        onFileUpload={handleFileUpload}
+        isUploading={isUploading}
+        onSave={handleSaveEditTask}
+        isSaving={updateTaskMutation.isPending}
+      />
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                  Start Date
-                </label>
-                <Input
-                  type="date"
-                  value={newTaskStartDate}
-                  onChange={(e) => setNewTaskStartDate(e.target.value)}
-                  data-testid="input-task-start-date"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                  End Date
-                </label>
-                <Input
-                  type="date"
-                  value={newTaskEndDate}
-                  onChange={(e) => setNewTaskEndDate(e.target.value)}
-                  data-testid="input-task-end-date"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                Time Estimate
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min="0"
-                  placeholder="Hours"
-                  value={newTaskEstimateHours || ""}
-                  onChange={(e) =>
-                    setNewTaskEstimateHours(Number(e.target.value) || 0)
-                  }
-                  className="w-24"
-                  data-testid="input-task-estimate-hours"
-                />
-                <span className="text-sm text-muted-foreground">h</span>
-                <Input
-                  type="number"
-                  min="0"
-                  max="59"
-                  placeholder="Minutes"
-                  value={newTaskEstimateMinutes || ""}
-                  onChange={(e) =>
-                    setNewTaskEstimateMinutes(Number(e.target.value) || 0)
-                  }
-                  className="w-24"
-                  data-testid="input-task-estimate-minutes"
-                />
-                <span className="text-sm text-muted-foreground">m</span>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button
-              onClick={handleAddTask}
-              disabled={createTaskMutation.isPending}
-              data-testid="button-submit-task"
-            >
-              Add Task
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Task Dialog */}
-      <Dialog open={isEditTaskOpen} onOpenChange={setIsEditTaskOpen}>
-        <DialogContent className="max-w-2xl w-[95vw] sm:w-full max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Edit Task</DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="flex-1 max-h-[65vh] overflow-scroll">
-            <div className="space-y-4 py-4 pr-4">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                  Status
-                </label>
-                <Select
-                  value={editTaskStatus}
-                  onValueChange={setEditTaskStatus}
-                >
-                  <SelectTrigger data-testid="select-edit-task-status">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todo">Not Started</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Input
-                placeholder="Task title..."
-                value={editTaskTitle}
-                onChange={(e) => setEditTaskTitle(e.target.value)}
-                data-testid="input-edit-task-title"
-              />
-              <Textarea
-                placeholder="Description (optional)..."
-                value={editTaskDescription}
-                onChange={(e) => setEditTaskDescription(e.target.value)}
-                data-testid="input-edit-task-description"
-              />
-
-              <Select
-                value={editTaskPriority}
-                onValueChange={setEditTaskPriority}
-              >
-                <SelectTrigger data-testid="select-edit-task-priority">
-                  <SelectValue placeholder="Priority" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">
-                  <Users className="h-4 w-4 inline mr-2" />
-                  Assign Users
-                </label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full justify-between"
-                      data-testid="button-assign-users-edit"
-                    >
-                      <span className="truncate">
-                        {editTaskAssignees.length === 0
-                          ? "Select users..."
-                          : `${editTaskAssignees.length} user${editTaskAssignees.length > 1 ? "s" : ""} selected`}
-                      </span>
-                      <ChevronDown className="h-4 w-4 ml-2 flex-shrink-0" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 p-2" align="start">
-                    <div className="space-y-1">
-                      {users.map((user) => (
-                        <div
-                          key={user.id}
-                          className="flex items-center gap-2 p-2 rounded hover-elevate cursor-pointer"
-                          onClick={() =>
-                            toggleAssignee(
-                              user.id,
-                              editTaskAssignees,
-                              setEditTaskAssignees,
-                            )
-                          }
-                        >
-                          <Checkbox
-                            checked={editTaskAssignees.includes(user.id)}
-                            onCheckedChange={() =>
-                              toggleAssignee(
-                                user.id,
-                                editTaskAssignees,
-                                setEditTaskAssignees,
-                              )
-                            }
-                          />
-                          <span className="text-sm">{user.name}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                    Start Date
-                  </label>
-                  <Input
-                    type="date"
-                    value={editTaskStartDate}
-                    onChange={(e) => setEditTaskStartDate(e.target.value)}
-                    data-testid="input-edit-task-start-date"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                    End Date
-                  </label>
-                  <Input
-                    type="date"
-                    value={editTaskEndDate}
-                    onChange={(e) => setEditTaskEndDate(e.target.value)}
-                    data-testid="input-edit-task-end-date"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-1 block">
-                  Time Estimate
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="Hours"
-                    value={editTaskEstimateHours || ""}
-                    onChange={(e) =>
-                      setEditTaskEstimateHours(Number(e.target.value) || 0)
-                    }
-                    className="w-24"
-                    data-testid="input-edit-task-estimate-hours"
-                  />
-                  <span className="text-sm text-muted-foreground">h</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="59"
-                    placeholder="Minutes"
-                    value={editTaskEstimateMinutes || ""}
-                    onChange={(e) =>
-                      setEditTaskEstimateMinutes(Number(e.target.value) || 0)
-                    }
-                    className="w-24"
-                    data-testid="input-edit-task-estimate-minutes"
-                  />
-                  <span className="text-sm text-muted-foreground">m</span>
-                </div>
-              </div>
-
-              {/* Checklist Section */}
-              <div className="border rounded-lg p-4">
-                <label className="text-sm font-medium mb-2 flex items-center gap-2">
-                  <ListChecks className="h-4 w-4" />
-                  Checklist
-                </label>
-                <div className="space-y-2 mt-2">
-                  {editTaskChecklist.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2">
-                      <Checkbox
-                        checked={item.completed}
-                        onCheckedChange={() =>
-                          handleToggleChecklistItem(item.id)
-                        }
-                      />
-                      <span
-                        className={`flex-1 text-sm ${item.completed ? "line-through text-muted-foreground" : ""}`}
-                      >
-                        {item.title}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => handleRemoveChecklistItem(item.id)}
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2 mt-2">
-                    <Input
-                      placeholder="Add checklist item..."
-                      value={newChecklistItem}
-                      onChange={(e) => setNewChecklistItem(e.target.value)}
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && handleAddChecklistItem()
-                      }
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleAddChecklistItem}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Attachments Section */}
-              <div className="border rounded-lg p-4">
-                <label className="text-sm font-medium mb-2 flex items-center gap-2">
-                  <Paperclip className="h-4 w-4" />
-                  Attachments
-                </label>
-                <div className="space-y-2 mt-2">
-                  {editTaskAttachments.map((att) => (
-                    <div
-                      key={att.id}
-                      className="flex items-center gap-2 p-2 bg-muted rounded"
-                    >
-                      {getFileIcon(att.type)}
-                      <button
-                        className="flex-1 text-sm truncate text-left text-indigo-500 hover:underline"
-                        onClick={() => downloadAttachment(att.url, att.name)}
-                      >
-                        {att.name}
-                      </button>
-
-                      <span className="text-xs text-muted-foreground">
-                        {(att.size / 1024).toFixed(1)}KB
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => handleRemoveAttachment(att.id)}
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                  <div className="mt-2">
-                    <label className="cursor-pointer">
-                      <input
-                        type="file"
-                        className="hidden"
-                        onChange={handleFileUpload}
-                        disabled={isUploading}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={isUploading}
-                        asChild
-                      >
-                        <span>
-                          <Upload className="h-4 w-4 mr-2" />
-                          {isUploading ? "Uploading..." : "Upload File"}
-                        </span>
-                      </Button>
-                    </label>
-                    <span className="text-xs text-muted-foreground ml-2">
-                      Max 10MB
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </ScrollArea>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button
-              onClick={handleSaveEditTask}
-              disabled={updateTaskMutation.isPending}
-              data-testid="button-save-edit-task"
-            >
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Task History Dialog */}
-      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              Task History
-            </DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="max-h-[60vh]">
-            <div className="space-y-3 py-4">
-              {historyTask?.history && historyTask.history.length > 0 ? (
-                [...historyTask.history].reverse().map((entry, index) => {
-                  const isStructured =
-                    typeof entry === "object" &&
-                    entry !== null &&
-                    "action" in entry;
-                  const historyEntry = isStructured
-                    ? (entry as HistoryEntry)
-                    : null;
-                  const legacyEntry = !isStructured ? String(entry) : null;
-
-                  return (
-                    <div
-                      key={index}
-                      className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg"
-                    >
-                      <div className="h-2 w-2 mt-2 rounded-full bg-primary flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        {historyEntry ? (
-                          <>
-                            <p className="text-sm font-medium">
-                              {historyEntry.action}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <UserIcon className="h-3 w-3" />
-                                {historyEntry.userName || "Unknown"}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
-                                {new Date(
-                                  historyEntry.timestamp,
-                                ).toLocaleDateString()}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                {new Date(
-                                  historyEntry.timestamp,
-                                ).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </span>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="text-sm">{legacyEntry}</p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-sm text-muted-foreground text-center">
-                  No history available
-                </p>
-              )}
-            </div>
-          </ScrollArea>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Close</Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TaskHistoryDialog
+        open={isHistoryOpen}
+        onOpenChange={setIsHistoryOpen}
+        historyTask={historyTask}
+      />
     </div>
   );
 }
