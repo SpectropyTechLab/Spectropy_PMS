@@ -10,7 +10,12 @@ interface UploadMetadata {
 interface UploadResponse {
   uploadURL: string;
   objectPath: string;
+  publicUrl?: string;
   metadata: UploadMetadata;
+}
+
+interface UploadOptions {
+  folder?: string;
 }
 
 interface UseUploadOptions {
@@ -61,7 +66,7 @@ export function useUpload(options: UseUploadOptions = {}) {
    * IMPORTANT: Send JSON metadata, NOT the file itself.
    */
   const requestUploadUrl = useCallback(
-    async (file: File): Promise<UploadResponse> => {
+    async (file: File, uploadOptions?: UploadOptions): Promise<UploadResponse> => {
       const response = await fetch("/api/uploads/request-url", {
         method: "POST",
         headers: {
@@ -71,6 +76,7 @@ export function useUpload(options: UseUploadOptions = {}) {
           name: file.name,
           size: file.size,
           contentType: file.type || "application/octet-stream",
+          folder: uploadOptions?.folder,
         }),
       });
 
@@ -111,7 +117,7 @@ export function useUpload(options: UseUploadOptions = {}) {
    * @returns The upload response containing the object path
    */
   const uploadFile = useCallback(
-    async (file: File): Promise<UploadResponse | null> => {
+    async (file: File, uploadOptions?: UploadOptions): Promise<UploadResponse | null> => {
       setIsUploading(true);
       setError(null);
       setProgress(0);
@@ -119,19 +125,19 @@ export function useUpload(options: UseUploadOptions = {}) {
       try {
         // Step 1: Request presigned URL (send metadata as JSON)
         setProgress(10);
-        const uploadResponse = await requestUploadUrl(file);
+        const uploadResponse = await requestUploadUrl(file, uploadOptions);
 
         // Step 2: Upload file directly to presigned URL
         setProgress(30);
         await uploadToPresignedUrl(file, uploadResponse.uploadURL);
 
         setProgress(100);
-        options.onSuccess?.(uploadResponse);
+        options?.onSuccess?.(uploadResponse);
         return uploadResponse;
       } catch (err) {
         const error = err instanceof Error ? err : new Error("Upload failed");
         setError(error);
-        options.onError?.(error);
+        options?.onError?.(error);
         return null;
       } finally {
         setIsUploading(false);
@@ -196,4 +202,3 @@ export function useUpload(options: UseUploadOptions = {}) {
     progress,
   };
 }
-

@@ -1,17 +1,19 @@
 import { db } from "./db";
 import {
-  users, projects, tasks, buckets, notifications, activityLogs,
+  users, projects, tasks, buckets, notifications, activityLogs, deletedProjects, deletedTasks,
   type User, type InsertUser,
   type Project, type InsertProject,
   type Bucket, type InsertBucket,
   type Task, type InsertTask,
+  type DeletedProject, type InsertDeletedProject,
+  type DeletedTask, type InsertDeletedTask,
   type Notification, type InsertNotification,
   type ActivityLog, type InsertActivityLog,
   type UpdateProjectRequest,
   type UpdateBucketRequest,
   type UpdateTaskRequest
 } from "@shared/schema";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq, asc, desc, lt } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -45,6 +47,31 @@ export interface IStorage {
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: number, updates: UpdateTaskRequest): Promise<Task>;
   deleteTask(id: number): Promise<void>;
+
+  // Deleted items
+  archiveProject(id: number, deletedBy?: number | null): Promise<{
+    project: Project;
+    buckets: Bucket[];
+    tasks: Task[];
+    deletedProjectId: number;
+    deletedTasks: DeletedTask[];
+  } | null>;
+  archiveTask(id: number, deletedBy?: number | null): Promise<{
+    task: Task;
+    deletedTaskId: number;
+  } | null>;
+  restoreDeletedProject(deletedProjectId: number, restoredBy?: number | null): Promise<{
+    project: Project;
+    buckets: Bucket[];
+    tasks: Task[];
+  } | null>;
+  restoreDeletedTask(deletedTaskId: number, restoredBy?: number | null): Promise<{
+    task: Task;
+  } | null>;
+  purgeDeletedRecords(olderThanDays: number): Promise<{
+    deletedProjects: number;
+    deletedTasks: number;
+  }>;
 
   // Notifications
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -198,6 +225,313 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTask(id: number): Promise<void> {
     await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  // Deleted items
+  async archiveProject(
+    id: number,
+    deletedBy: number | null = null,
+  ): Promise<{
+    project: Project;
+    buckets: Bucket[];
+    tasks: Task[];
+    deletedProjectId: number;
+    deletedTasks: DeletedTask[];
+  } | null> {
+    return db.transaction(async (tx) => {
+      const [project] = await tx.select().from(projects).where(eq(projects.id, id));
+      if (!project) return null;
+
+      const projectBuckets = await tx
+        .select()
+        .from(buckets)
+        .where(eq(buckets.projectId, id))
+        .orderBy(asc(buckets.position));
+
+      const projectTasks = await tx
+        .select()
+        .from(tasks)
+        .where(eq(tasks.projectId, id))
+        .orderBy(asc(tasks.position));
+
+      const [deletedProject] = await tx
+        .insert(deletedProjects)
+        .values({
+          originalProjectId: project.id,
+          name: project.name,
+          description: project.description,
+          status: project.status ?? "active",
+          startDate: project.startDate,
+          endDate: project.endDate,
+          ownerId: project.ownerId,
+          lastModifiedBy: project.lastModifiedBy,
+          buckets: projectBuckets,
+          deletedAt: new Date(),
+          deletedBy,
+        } satisfies InsertDeletedProject)
+        .returning();
+
+      let insertedDeletedTasks: DeletedTask[] = [];
+      if (projectTasks.length > 0) {
+        const deletedAt = new Date();
+        insertedDeletedTasks = await tx
+          .insert(deletedTasks)
+          .values(
+            projectTasks.map((task) => ({
+              originalTaskId: task.id,
+              projectId: task.projectId,
+              bucketId: task.bucketId,
+              title: task.title,
+              description: task.description,
+              status: task.status ?? "todo",
+              priority: task.priority ?? "medium",
+              assigneeId: task.assigneeId,
+              assignedUsers: task.assignedUsers ?? [],
+              estimateHours: task.estimateHours ?? 0,
+              estimateMinutes: task.estimateMinutes ?? 0,
+              history: task.history ?? [],
+              checklist: task.checklist ?? [],
+              attachments: task.attachments ?? [],
+              startDate: task.startDate,
+              dueDate: task.dueDate,
+              position: task.position,
+              createdAt: task.createdAt,
+              deletedAt,
+              deletedBy,
+              deletedProjectId: deletedProject.id,
+            } satisfies InsertDeletedTask)),
+          )
+          .returning();
+      }
+
+      await tx.delete(tasks).where(eq(tasks.projectId, id));
+      await tx.delete(buckets).where(eq(buckets.projectId, id));
+      await tx.delete(projects).where(eq(projects.id, id));
+
+      return {
+        project,
+        buckets: projectBuckets,
+        tasks: projectTasks,
+        deletedProjectId: deletedProject.id,
+        deletedTasks: insertedDeletedTasks,
+      };
+    });
+  }
+
+  async archiveTask(
+    id: number,
+    deletedBy: number | null = null,
+  ): Promise<{ task: Task; deletedTaskId: number } | null> {
+    return db.transaction(async (tx) => {
+      const [task] = await tx.select().from(tasks).where(eq(tasks.id, id));
+      if (!task) return null;
+
+      const [deletedTask] = await tx
+        .insert(deletedTasks)
+        .values({
+          originalTaskId: task.id,
+          projectId: task.projectId,
+          bucketId: task.bucketId,
+          title: task.title,
+          description: task.description,
+          status: task.status ?? "todo",
+          priority: task.priority ?? "medium",
+          assigneeId: task.assigneeId,
+          assignedUsers: task.assignedUsers ?? [],
+          estimateHours: task.estimateHours ?? 0,
+          estimateMinutes: task.estimateMinutes ?? 0,
+          history: task.history ?? [],
+          checklist: task.checklist ?? [],
+          attachments: task.attachments ?? [],
+          startDate: task.startDate,
+          dueDate: task.dueDate,
+          position: task.position,
+          createdAt: task.createdAt,
+          deletedAt: new Date(),
+          deletedBy,
+          deletedProjectId: null,
+        } satisfies InsertDeletedTask)
+        .returning();
+
+      await tx.delete(tasks).where(eq(tasks.id, id));
+
+      return { task, deletedTaskId: deletedTask.id };
+    });
+  }
+
+  async restoreDeletedProject(
+    deletedProjectId: number,
+    restoredBy: number | null = null,
+  ): Promise<{ project: Project; buckets: Bucket[]; tasks: Task[] } | null> {
+    return db.transaction(async (tx) => {
+      const [deletedProject] = await tx
+        .select()
+        .from(deletedProjects)
+        .where(eq(deletedProjects.id, deletedProjectId));
+      if (!deletedProject) return null;
+
+      const existingProject = await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.id, deletedProject.originalProjectId));
+      if (existingProject.length > 0) {
+        throw new Error("Project already exists");
+      }
+
+      const restoredStatus =
+        deletedProject.status === "deleted"
+          ? "active"
+          : deletedProject.status || "active";
+
+      const [project] = await tx
+        .insert(projects)
+        .values({
+          id: deletedProject.originalProjectId,
+          name: deletedProject.name,
+          description: deletedProject.description,
+          status: restoredStatus,
+          startDate: deletedProject.startDate,
+          endDate: deletedProject.endDate,
+          ownerId: deletedProject.ownerId,
+          lastModifiedBy: deletedProject.lastModifiedBy ?? restoredBy ?? undefined,
+        })
+        .returning();
+
+      const bucketSnapshot = (deletedProject.buckets || []) as Bucket[];
+      if (bucketSnapshot.length > 0) {
+        await tx.insert(buckets).values(
+          bucketSnapshot.map((bucket) => ({
+            id: bucket.id,
+            title: bucket.title,
+            projectId: project.id,
+            position: bucket.position,
+          })),
+        );
+      }
+
+      const deletedProjectTasks = await tx
+        .select()
+        .from(deletedTasks)
+        .where(eq(deletedTasks.deletedProjectId, deletedProjectId))
+        .orderBy(asc(deletedTasks.position));
+
+      let restoredTasks: Task[] = [];
+      if (deletedProjectTasks.length > 0) {
+        restoredTasks = await tx
+          .insert(tasks)
+          .values(
+            deletedProjectTasks.map((task) => ({
+              id: task.originalTaskId,
+              title: task.title,
+              description: task.description,
+              status: task.status,
+              priority: task.priority,
+              projectId: project.id,
+              bucketId: task.bucketId,
+              assigneeId: task.assigneeId,
+              assignedUsers: task.assignedUsers ?? [],
+              estimateHours: task.estimateHours ?? 0,
+              estimateMinutes: task.estimateMinutes ?? 0,
+              history: task.history ?? [],
+              checklist: task.checklist ?? [],
+              attachments: task.attachments ?? [],
+              startDate: task.startDate,
+              dueDate: task.dueDate,
+              position: task.position,
+              createdAt: task.createdAt ?? new Date(),
+            })),
+          )
+          .returning();
+      }
+
+      await tx
+        .delete(deletedTasks)
+        .where(eq(deletedTasks.deletedProjectId, deletedProjectId));
+      await tx.delete(deletedProjects).where(eq(deletedProjects.id, deletedProjectId));
+
+      return { project, buckets: bucketSnapshot, tasks: restoredTasks };
+    });
+  }
+
+  async restoreDeletedTask(
+    deletedTaskId: number,
+    restoredBy: number | null = null,
+  ): Promise<{ task: Task } | null> {
+    return db.transaction(async (tx) => {
+      const [deletedTask] = await tx
+        .select()
+        .from(deletedTasks)
+        .where(eq(deletedTasks.id, deletedTaskId));
+      if (!deletedTask) return null;
+
+      const [project] = await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.id, deletedTask.projectId));
+      if (!project) {
+        throw new Error("Project not found");
+      }
+
+      let bucketId = deletedTask.bucketId;
+      if (bucketId) {
+        const [bucket] = await tx
+          .select()
+          .from(buckets)
+          .where(eq(buckets.id, bucketId));
+        if (!bucket) {
+          bucketId = null;
+        }
+      }
+
+      const [task] = await tx
+        .insert(tasks)
+        .values({
+          id: deletedTask.originalTaskId,
+          title: deletedTask.title,
+          description: deletedTask.description,
+          status: deletedTask.status,
+          priority: deletedTask.priority,
+          projectId: deletedTask.projectId,
+          bucketId,
+          assigneeId: deletedTask.assigneeId,
+          assignedUsers: deletedTask.assignedUsers ?? [],
+          estimateHours: deletedTask.estimateHours ?? 0,
+          estimateMinutes: deletedTask.estimateMinutes ?? 0,
+          history: deletedTask.history ?? [],
+          checklist: deletedTask.checklist ?? [],
+          attachments: deletedTask.attachments ?? [],
+          startDate: deletedTask.startDate,
+          dueDate: deletedTask.dueDate,
+          position: deletedTask.position,
+          createdAt: deletedTask.createdAt ?? new Date(),
+        })
+        .returning();
+
+      await tx.delete(deletedTasks).where(eq(deletedTasks.id, deletedTaskId));
+
+      return { task };
+    });
+  }
+
+  async purgeDeletedRecords(
+    olderThanDays: number,
+  ): Promise<{ deletedProjects: number; deletedTasks: number }> {
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+    const removedTasks = await db
+      .delete(deletedTasks)
+      .where(lt(deletedTasks.deletedAt, cutoff))
+      .returning({ id: deletedTasks.id });
+
+    const removedProjects = await db
+      .delete(deletedProjects)
+      .where(lt(deletedProjects.deletedAt, cutoff))
+      .returning({ id: deletedProjects.id });
+
+    return {
+      deletedProjects: removedProjects.length,
+      deletedTasks: removedTasks.length,
+    };
   }
 
   // Notifications

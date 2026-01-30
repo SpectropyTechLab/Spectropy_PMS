@@ -15,10 +15,14 @@ export class SupabaseStorageService {
         userId: number;
         fileName: string;
         contentType: string;
+        folder?: string;
     }) {
-        const { userId, fileName } = params;
+        const { userId, fileName, folder } = params;
+        const safeFolder = (folder || "projects").replace(/[^a-zA-Z0-9_-]/g, "");
+        const normalizedFolder = safeFolder.length > 0 ? safeFolder : "projects";
+        const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "-");
 
-        const objectPath = `projects/${userId}/${Date.now()}-${fileName}`;
+        const objectPath = `${normalizedFolder}/${userId}/${Date.now()}-${safeFileName}`;
 
         const { data, error } = await supabase.storage
             .from(this.bucket)

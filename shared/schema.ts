@@ -104,6 +104,46 @@ export const tasks = pgTable("tasks", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const deletedProjects = pgTable("deleted_projects", {
+  id: serial("id").primaryKey(),
+  originalProjectId: integer("original_project_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("active"),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  ownerId: integer("owner_id").references(() => users.id),
+  lastModifiedBy: integer("last_modified_by").references(() => users.id),
+  buckets: jsonb("buckets").$type<Bucket[]>().default([]),
+  deletedAt: timestamp("deleted_at").defaultNow().notNull(),
+  deletedBy: integer("deleted_by").references(() => users.id),
+});
+
+export const deletedTasks = pgTable("deleted_tasks", {
+  id: serial("id").primaryKey(),
+  originalTaskId: integer("original_task_id").notNull(),
+  projectId: integer("project_id").notNull(),
+  bucketId: integer("bucket_id"),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("todo"),
+  priority: text("priority").notNull().default("medium"),
+  assigneeId: integer("assignee_id"),
+  assignedUsers: integer("assigned_users").array().default([]),
+  estimateHours: integer("estimate_hours").default(0),
+  estimateMinutes: integer("estimate_minutes").default(0),
+  history: jsonb("history").$type<HistoryItem[]>().default([]),
+  checklist: jsonb("checklist").$type<ChecklistItem[]>().default([]),
+  attachments: jsonb("attachments").$type<Attachment[]>().default([]),
+  startDate: timestamp("start_date"),
+  dueDate: timestamp("due_date"),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at"),
+  deletedAt: timestamp("deleted_at").defaultNow().notNull(),
+  deletedBy: integer("deleted_by").references(() => users.id),
+  deletedProjectId: integer("deleted_project_id").references(() => deletedProjects.id),
+});
+
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
   taskId: integer("task_id").references(() => tasks.id, { onDelete: "cascade" }),
@@ -174,6 +214,8 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({ id: true, creat
 });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertActivityLogSchema = createInsertSchema(activityLogs).omit({ id: true, createdAt: true });
+export const insertDeletedProjectSchema = createInsertSchema(deletedProjects).omit({ id: true });
+export const insertDeletedTaskSchema = createInsertSchema(deletedTasks).omit({ id: true });
 
 // Types
 export type User = typeof users.$inferSelect;
@@ -188,6 +230,10 @@ export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;
+export type DeletedProject = typeof deletedProjects.$inferSelect;
+export type InsertDeletedProject = z.infer<typeof insertDeletedProjectSchema>;
+export type DeletedTask = typeof deletedTasks.$inferSelect;
+export type InsertDeletedTask = z.infer<typeof insertDeletedTaskSchema>;
 
 // API Types
 export type CreateProjectRequest = InsertProject;

@@ -63,6 +63,20 @@ function createHistoryEntry(
   };
 }
 
+async function getProjectAndBucketNames(
+  projectId?: number | null,
+  bucketId?: number | null,
+) {
+  const project = projectId ? await storage.getProject(projectId) : null;
+  const bucket = bucketId ? await storage.getBucket(bucketId) : null;
+  return {
+    projectId: project?.id ?? projectId ?? null,
+    projectName: project?.name ?? null,
+    bucketId: bucket?.id ?? bucketId ?? null,
+    bucketName: bucket?.title ?? null,
+  };
+}
+
 async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
@@ -276,33 +290,57 @@ export async function registerRoutes(
       }
 
       const projectId = Number(req.params.id);
-      const project = await storage.getProject(projectId);
-      if (!project) {
+      const archived = await storage.archiveProject(projectId, currentUser.id);
+      if (!archived) {
         return res.status(404).json({ message: "Project not found" });
       }
-
-      const projectTasks = await storage.getTasks(projectId);
-      const projectBuckets = await storage.getBuckets(projectId);
 
       try {
         await storage.createActivityLog({
           entityType: "project",
-          entityId: projectId,
-          entityName: project.name,
+          entityId: archived.project.id,
+          entityName: archived.project.name,
           action: "deleted",
           performedBy: currentUser.id,
           performedByName: currentUser.name,
-          payload: JSON.parse(JSON.stringify({
-            project,
-            tasks: projectTasks,
-            buckets: projectBuckets,
-          })),
+          payload: {
+            deletedProjectId: archived.deletedProjectId,
+            projectId: archived.project.id,
+          },
         });
       } catch (logErr) {
         console.error("Failed to create activity log for project deletion:", logErr);
       }
 
-      await storage.updateProject(projectId, { status: "deleted" });
+      if (archived.deletedTasks.length > 0) {
+        const bucketTitleMap = new Map(
+          archived.buckets.map((bucket) => [bucket.id, bucket.title]),
+        );
+        for (const deletedTask of archived.deletedTasks) {
+          try {
+            await storage.createActivityLog({
+              entityType: "task",
+              entityId: deletedTask.originalTaskId,
+              entityName: deletedTask.title,
+              action: "deleted",
+              performedBy: currentUser.id,
+              performedByName: currentUser.name,
+              payload: {
+                deletedTaskId: deletedTask.id,
+                projectId: deletedTask.projectId,
+                projectName: archived.project.name,
+                bucketId: deletedTask.bucketId,
+                bucketName: deletedTask.bucketId
+                  ? bucketTitleMap.get(deletedTask.bucketId) ?? null
+                  : null,
+              },
+            });
+          } catch (logErr) {
+            console.error("Failed to create activity log for task deletion:", logErr);
+          }
+        }
+      }
+
       res.status(204).send();
     } catch (err) {
       res.status(500).json({ message: "Failed to delete project" });
@@ -354,6 +392,24 @@ export async function registerRoutes(
 
       const input = api.tasks.create.input.parse(req.body);
       const task = await storage.createTask(input);
+
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: task.id,
+          entityName: task.title,
+          action: "created",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: { taskId: task.id, ...logContext },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for task creation:", logErr);
+      }
 
       if (task.assigneeId) {
         const assignee = await storage.getUser(task.assigneeId);
@@ -542,6 +598,24 @@ export async function registerRoutes(
         }
       }
 
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: task.id,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: { taskId: task.id, changes: input, ...logContext },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for task update:", logErr);
+      }
+
       res.json(task);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -558,10 +632,150 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Permission denied", message: "You do not have permission to delete tasks" });
       }
 
-      await storage.deleteTask(Number(req.params.id));
+      const archived = await storage.archiveTask(Number(req.params.id), currentUser.id);
+      if (!archived) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+
+      try {
+        const logContext = await getProjectAndBucketNames(
+          archived.task.projectId,
+          archived.task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: archived.task.id,
+          entityName: archived.task.title,
+          action: "deleted",
+          performedBy: currentUser.id,
+          performedByName: currentUser.name,
+          payload: {
+            deletedTaskId: archived.deletedTaskId,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for task deletion:", logErr);
+      }
+
       res.status(204).send();
     } catch (err) {
       res.status(500).json({ message: "Failed to delete task" });
+    }
+  });
+
+  app.post("/api/deleted/projects/:id/restore", async (req, res) => {
+    try {
+      const currentUser = await storage.getUser(getCurrentUserId(req));
+      if (!currentUser || (currentUser.role !== "Admin" && !hasPermission(currentUser, "DELETE_PROJECT"))) {
+        return res.status(403).json({ error: "Permission denied", message: "You do not have permission to restore projects" });
+      }
+
+      const deletedProjectId = Number(req.params.id);
+      try {
+        const restored = await storage.restoreDeletedProject(deletedProjectId, currentUser.id);
+        if (!restored) {
+          return res.status(404).json({ message: "Deleted project not found" });
+        }
+
+        try {
+          await storage.createActivityLog({
+            entityType: "project",
+            entityId: restored.project.id,
+            entityName: restored.project.name,
+            action: "restored",
+            performedBy: currentUser.id,
+            performedByName: currentUser.name,
+            payload: {
+              projectId: restored.project.id,
+            },
+          });
+        } catch (logErr) {
+          console.error("Failed to create activity log for project restore:", logErr);
+        }
+
+        if (restored.tasks.length > 0) {
+          const bucketTitleMap = new Map(
+            restored.buckets.map((bucket) => [bucket.id, bucket.title]),
+          );
+          for (const task of restored.tasks) {
+            try {
+              await storage.createActivityLog({
+                entityType: "task",
+                entityId: task.id,
+                entityName: task.title,
+                action: "restored",
+                performedBy: currentUser.id,
+                performedByName: currentUser.name,
+                payload: {
+                  taskId: task.id,
+                  projectId: task.projectId,
+                  projectName: restored.project.name,
+                  bucketId: task.bucketId,
+                  bucketName: task.bucketId
+                    ? bucketTitleMap.get(task.bucketId) ?? null
+                    : null,
+                },
+              });
+            } catch (logErr) {
+              console.error("Failed to create activity log for task restore:", logErr);
+            }
+          }
+        }
+
+        res.json(restored.project);
+      } catch (err) {
+        if (err instanceof Error && err.message === "Project already exists") {
+          return res.status(409).json({ message: "Project already exists" });
+        }
+        throw err;
+      }
+    } catch (err) {
+      res.status(500).json({ message: "Failed to restore project" });
+    }
+  });
+
+  app.post("/api/deleted/tasks/:id/restore", async (req, res) => {
+    try {
+      const currentUser = await storage.getUser(getCurrentUserId(req));
+      if (!currentUser || (currentUser.role !== "Admin" && !hasPermission(currentUser, "DELETE_TASK"))) {
+        return res.status(403).json({ error: "Permission denied", message: "You do not have permission to restore tasks" });
+      }
+
+      const deletedTaskId = Number(req.params.id);
+      try {
+        const restored = await storage.restoreDeletedTask(deletedTaskId, currentUser.id);
+        if (!restored) {
+          return res.status(404).json({ message: "Deleted task not found" });
+        }
+
+        try {
+          const logContext = await getProjectAndBucketNames(
+            restored.task.projectId,
+            restored.task.bucketId,
+          );
+          await storage.createActivityLog({
+            entityType: "task",
+            entityId: restored.task.id,
+            entityName: restored.task.title,
+            action: "restored",
+            performedBy: currentUser.id,
+            performedByName: currentUser.name,
+            payload: { taskId: restored.task.id, ...logContext },
+          });
+        } catch (logErr) {
+          console.error("Failed to create activity log for task restore:", logErr);
+        }
+
+        res.json(restored.task);
+      } catch (err) {
+        if (err instanceof Error && err.message === "Project not found") {
+          return res.status(409).json({ message: "Project not found. Restore the project first." });
+        }
+        throw err;
+      }
+    } catch (err) {
+      res.status(500).json({ message: "Failed to restore task" });
     }
   });
 
@@ -985,7 +1199,7 @@ export async function registerRoutes(
 
   app.post("/api/uploads/request-url", async (req, res) => {
     try {
-      const { name, size, contentType } = req.body;
+      const { name, size, contentType, folder } = req.body;
 
       if (!name || !contentType) {
         return res.status(400).json({ error: "Missing file metadata" });
@@ -997,11 +1211,16 @@ export async function registerRoutes(
         userId,
         fileName: name,
         contentType,
+        folder,
       });
+      const { data: publicData } = supabase.storage
+        .from(storageService.bucket)
+        .getPublicUrl(result.objectPath);
 
       res.json({
         uploadURL: result.uploadURL,
         objectPath: result.objectPath,
+        publicUrl: publicData?.publicUrl,
         metadata: {
           name,
           size,
@@ -1046,6 +1265,7 @@ export async function registerRoutes(
   app.post("/api/tasks/:id/checklist", async (req, res) => {
     try {
       const taskId = Number(req.params.id);
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
@@ -1054,6 +1274,28 @@ export async function registerRoutes(
       const history = [...(task.history || []), `Checklist item added: "${input.title}" on ${new Date().toLocaleDateString()}`];
 
       const updatedTask = await storage.updateTask(taskId, { checklist, history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: {
+            taskId,
+            type: "checklist_added",
+            itemId: input.id,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for checklist add:", logErr);
+      }
       res.json(updatedTask);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -1067,6 +1309,7 @@ export async function registerRoutes(
     try {
       const taskId = Number(req.params.id);
       const itemId = req.params.itemId;
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
@@ -1081,6 +1324,28 @@ export async function registerRoutes(
       const history = [...(task.history || []), historyEntry];
 
       const updatedTask = await storage.updateTask(taskId, { checklist, history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: {
+            taskId,
+            type: "checklist_updated",
+            itemId,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for checklist update:", logErr);
+      }
       res.json(updatedTask);
     } catch (err) {
       res.status(500).json({ message: "Failed to update checklist item" });
@@ -1091,6 +1356,7 @@ export async function registerRoutes(
     try {
       const taskId = Number(req.params.id);
       const itemId = req.params.itemId;
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
@@ -1099,6 +1365,28 @@ export async function registerRoutes(
       const history = [...(task.history || []), `Checklist item removed: "${removedItem?.title || 'item'}" on ${new Date().toLocaleDateString()}`];
 
       const updatedTask = await storage.updateTask(taskId, { checklist, history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: {
+            taskId,
+            type: "checklist_removed",
+            itemId,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for checklist delete:", logErr);
+      }
       res.json(updatedTask);
     } catch (err) {
       res.status(500).json({ message: "Failed to delete checklist item" });
@@ -1109,6 +1397,7 @@ export async function registerRoutes(
   app.post("/api/tasks/:id/attachments", async (req, res) => {
     try {
       const taskId = Number(req.params.id);
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
@@ -1123,6 +1412,28 @@ export async function registerRoutes(
       const history = [...(task.history || []), `Attachment added: "${input.name}" on ${new Date().toLocaleDateString()}`];
 
       const updatedTask = await storage.updateTask(taskId, { attachments, history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: {
+            taskId,
+            type: "attachment_added",
+            attachmentId: input.id,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for attachment add:", logErr);
+      }
       res.json(updatedTask);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -1136,6 +1447,7 @@ export async function registerRoutes(
     try {
       const taskId = Number(req.params.id);
       const attachmentId = req.params.attachmentId;
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
@@ -1144,6 +1456,28 @@ export async function registerRoutes(
       const history = [...(task.history || []), `Attachment removed: "${removedAttachment?.name || 'file'}" on ${new Date().toLocaleDateString()}`];
 
       const updatedTask = await storage.updateTask(taskId, { attachments, history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: {
+            taskId,
+            type: "attachment_removed",
+            attachmentId,
+            ...logContext,
+          },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for attachment delete:", logErr);
+      }
       res.json(updatedTask);
     } catch (err) {
       res.status(500).json({ message: "Failed to delete attachment" });
@@ -1154,12 +1488,30 @@ export async function registerRoutes(
   app.post("/api/tasks/:id/complete-and-progress", async (req, res) => {
     try {
       const taskId = Number(req.params.id);
+      const currentUser = await storage.getUser(getCurrentUserId(req));
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ message: "Task not found" });
 
       // Mark current task as completed
       const history = [...(task.history || []), `Marked as completed on ${new Date().toLocaleDateString()}`];
       await storage.updateTask(taskId, { status: "completed", history });
+      try {
+        const logContext = await getProjectAndBucketNames(
+          task.projectId,
+          task.bucketId,
+        );
+        await storage.createActivityLog({
+          entityType: "task",
+          entityId: taskId,
+          entityName: task.title,
+          action: "updated",
+          performedBy: currentUser?.id ?? null,
+          performedByName: currentUser?.name ?? null,
+          payload: { taskId, type: "completed", ...logContext },
+        });
+      } catch (logErr) {
+        console.error("Failed to create activity log for task completion:", logErr);
+      }
 
       // Find next bucket
       if (task.bucketId) {

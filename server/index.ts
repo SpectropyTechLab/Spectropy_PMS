@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import cors from "cors";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -75,6 +76,23 @@ app.get("/health", (_req, res) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  const cleanupDeletedRecords = async () => {
+    try {
+      const result = await storage.purgeDeletedRecords(30);
+      if (result.deletedProjects > 0 || result.deletedTasks > 0) {
+        log(
+          `purged ${result.deletedProjects} deleted projects and ${result.deletedTasks} deleted tasks`,
+          "cleanup",
+        );
+      }
+    } catch (err) {
+      console.error("Failed to purge deleted records:", err);
+    }
+  };
+
+  cleanupDeletedRecords();
+  setInterval(cleanupDeletedRecords, 1000 * 60 * 60 * 12);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { User, Save, Camera } from "lucide-react";
+import { useUpload } from "@/hooks/use-upload";
+import { User, Save, Camera, Loader2 } from "lucide-react";
 import type { User as UserType } from "@shared/schema";
 
 export default function Account() {
@@ -24,6 +25,7 @@ export default function Account() {
   const [email, setEmail] = useState("");
   const [title, setTitle] = useState("");
   const [avatar, setAvatar] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -33,6 +35,57 @@ export default function Account() {
       setAvatar(currentUser.avatar || "");
     }
   }, [currentUser]);
+
+  const { uploadFile, isUploading } = useUpload({
+    onError: (error) => {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Could not upload your photo.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAvatarFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Only images allowed",
+        description: "Choose a PNG, JPG, or GIF file.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "Image must be smaller than 10MB.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    const response = await uploadFile(file, { folder: "logo" });
+    if (!response) {
+      event.target.value = "";
+      return;
+    }
+
+    const nextAvatar = response.publicUrl || response.objectPath;
+    setAvatar(nextAvatar);
+    toast({
+      title: "Photo uploaded",
+      description: "Click Save Changes to update your profile.",
+    });
+    event.target.value = "";
+  };
 
   const updateMutation = useMutation({
     mutationFn: async (data: Partial<UserType>) => {
@@ -107,10 +160,29 @@ export default function Account() {
                     onChange={(e) => setAvatar(e.target.value)}
                     data-testid="input-avatar"
                   />
-                  <Button type="button" size="icon" variant="outline">
-                    <Camera className="w-4 h-4" />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    data-testid="button-upload-avatar"
+                  >
+                    {isUploading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Camera className="w-4 h-4" />
+                    )}
                   </Button>
                 </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAvatarFileChange}
+                  disabled={isUploading}
+                />
               </div>
             </div>
 
