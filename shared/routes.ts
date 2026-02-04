@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertProjectSchema, insertTaskSchema, insertUserSchema, insertBucketSchema, projects, tasks, users, buckets } from './schema';
+import { insertProjectSchema, insertTaskSchema, insertUserSchema, insertBucketSchema, projects, tasks, users, buckets, notifications } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -114,6 +114,15 @@ export const api = {
       path: '/api/users',
       responses: {
         200: z.array(z.custom<typeof users.$inferSelect>()),
+      },
+    },
+  },
+  notifications: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/notifications',
+      responses: {
+        200: z.array(z.custom<typeof notifications.$inferSelect>()),
       },
     },
   },

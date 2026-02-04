@@ -18,6 +18,7 @@ interface TaskNotificationData {
   modificationType?: string;
 }
 
+
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFrom = process.env.RESEND_FROM;
 

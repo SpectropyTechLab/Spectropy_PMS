@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,10 @@ import {
   Clock,
   TrendingUp,
   ArrowRight,
+  Bell,
+  BarChart2,
+  Calendar,
+  Target,
 } from "lucide-react";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
@@ -23,7 +28,23 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import type { Project, Task } from "@shared/schema";
+import type { Notification, Project, Task } from "@shared/schema";
+
+const startOfDay = (value: Date) =>
+  new Date(value.getFullYear(), value.getMonth(), value.getDate());
+
+const isSameDay = (left: Date, right: Date) =>
+  startOfDay(left).getTime() === startOfDay(right).getTime();
+
+const isBeforeDay = (left: Date, right: Date) =>
+  startOfDay(left).getTime() < startOfDay(right).getTime();
+
+const isDateInRange = (target: Date, start: Date | null, end: Date | null) => {
+  const targetTime = startOfDay(target).getTime();
+  const startTime = start ? startOfDay(start).getTime() : -Infinity;
+  const endTime = end ? startOfDay(end).getTime() : Infinity;
+  return targetTime >= startTime && targetTime <= endTime;
+};
 
 export default function UserDashboard() {
   const userId = Number(localStorage.getItem("userId"));
@@ -43,11 +64,76 @@ export default function UserDashboard() {
   >({
     queryKey: ["/api/projects"],
   });
+
+  const { data: notifications = [] } = useQuery<Notification[]>({
+    queryKey: ["/api/notifications"],
+  });
   const completedTasks = myTasks.filter((task) => task.status === "completed");
   const pendingTasks = myTasks.filter((task) => task.status === "todo");
   const inProgressTasks = myTasks.filter(
     (task) => task.status === "in_progress",
   );
+  const today = startOfDay(new Date());
+  const pipelinePreviewCount = 4;
+
+  const { pipeline, myFocus } = useMemo(() => {
+    const _today: Task[] = [];
+    const _pending: Task[] = [];
+    const _overdue: Task[] = [];
+
+    myTasks.forEach((task) => {
+      if (task.status === "completed") return;
+
+      if (!task.dueDate) {
+        _pending.push(task);
+        return;
+      }
+
+      const due = new Date(task.dueDate);
+      if (isSameDay(due, today)) {
+        _today.push(task);
+      } else if (isBeforeDay(due, today)) {
+        _overdue.push(task);
+      } else {
+        _pending.push(task);
+      }
+    });
+
+    const _myDay = myTasks.filter((task) => {
+      if (task.status === "completed") return false;
+      const startDate = task.startDate ? new Date(task.startDate) : null;
+      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+      return isDateInRange(today, startDate, dueDate);
+    });
+
+    const _myOverdue = myTasks.filter((task) => {
+      if (!task.dueDate) return false;
+      return task.status !== "completed" && isBeforeDay(new Date(task.dueDate), today);
+    });
+
+    return {
+      pipeline: { today: _today, pending: _pending, overdue: _overdue },
+      myFocus: { today: _myDay, overdue: _myOverdue },
+    };
+  }, [myTasks, today]);
+
+  const taskById = new Map(myTasks.map((task) => [task.id, task]));
+  const recentNotifications = notifications.slice(0, 5);
+  const formatNotification = (notification: Notification) => {
+    const taskTitle = notification.taskId
+      ? taskById.get(notification.taskId)?.title || `Task #${notification.taskId}`
+      : "Task update";
+    switch (notification.type) {
+      case "assignment":
+        return `Assigned: ${taskTitle}`;
+      case "completion":
+        return `Completed: ${taskTitle}`;
+      case "update":
+        return `Updated: ${taskTitle}`;
+      default:
+        return `Notification: ${taskTitle}`;
+    }
+  };
 
   const myProjectIds = Array.from(
     new Set(myTasks.map((task) => task.projectId)),
@@ -423,6 +509,271 @@ export default function UserDashboard() {
           </Card>
         </motion.div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-6 items-start">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.9 }}
+        >
+          <Card>
+            <CardHeader className="pb-4 border-b border-slate-100">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <BarChart2 className="h-5 w-5 text-primary" />
+                    Operational Pipeline
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Centralized view of today&apos;s workload and progress.
+                  </p>
+                </div>
+                <div className="self-start md:self-auto bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                    Total Pending
+                  </p>
+                  <p className="text-2xl font-bold text-slate-900 leading-tight">
+                    {pipeline.pending.length}
+                  </p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      Today&apos;s Tasks
+                    </div>
+                    <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full font-bold text-slate-600">
+                      {pipeline.today.length}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {pipeline.today.length === 0 && (
+                      <div className="text-center py-6 text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg bg-slate-50/30">
+                        No tasks due today.
+                      </div>
+                    )}
+                    {pipeline.today.slice(0, pipelinePreviewCount).map((task) => (
+                      <div key={task.id} className="p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-800 line-clamp-2">{task.title}</p>
+                          <span className="text-[10px] font-semibold uppercase text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {task.status === "in_progress" ? "in progress" : "todo"}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No date"}
+                        </div>
+                      </div>
+                    ))}
+                    {pipeline.today.length > pipelinePreviewCount && (
+                      <p className="text-xs text-slate-500 text-center">
+                        + {pipeline.today.length - pipelinePreviewCount} more tasks
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      Pending Tasks
+                    </div>
+                    <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full font-bold text-slate-600">
+                      {pipeline.pending.length}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {pipeline.pending.length === 0 && (
+                      <div className="text-center py-6 text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg bg-slate-50/30">
+                        No pending tasks.
+                      </div>
+                    )}
+                    {pipeline.pending.slice(0, pipelinePreviewCount).map((task) => (
+                      <div key={task.id} className="p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-800 line-clamp-2">{task.title}</p>
+                          <span className="text-[10px] font-semibold uppercase text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {task.status === "in_progress" ? "in progress" : "todo"}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No date"}
+                        </div>
+                      </div>
+                    ))}
+                    {pipeline.pending.length > pipelinePreviewCount && (
+                      <p className="text-xs text-slate-500 text-center">
+                        + {pipeline.pending.length - pipelinePreviewCount} more tasks
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      Due Tasks
+                    </div>
+                    <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full font-bold text-slate-600">
+                      {pipeline.overdue.length}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {pipeline.overdue.length === 0 && (
+                      <div className="text-center py-6 text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg bg-slate-50/30">
+                        No overdue tasks.
+                      </div>
+                    )}
+                    {pipeline.overdue.slice(0, pipelinePreviewCount).map((task) => (
+                      <div key={task.id} className="p-3 rounded-xl border border-rose-100 bg-white shadow-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-800 line-clamp-2">{task.title}</p>
+                          <span className="text-[10px] font-semibold uppercase text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                            {task.status === "in_progress" ? "in progress" : "todo"}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No date"}
+                        </div>
+                      </div>
+                    ))}
+                    {pipeline.overdue.length > pipelinePreviewCount && (
+                      <p className="text-xs text-slate-500 text-center">
+                        + {pipeline.overdue.length - pipelinePreviewCount} more tasks
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.0 }}
+        >
+          <Card>
+            <CardHeader className="pb-3 border-b border-slate-100">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Target className="h-5 w-5 text-primary" />
+                  My Focus
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {myFocus.overdue.length > 0 && (
+                    <Badge className="bg-rose-500 hover:bg-rose-600 shadow-sm">
+                      {myFocus.overdue.length} Overdue
+                    </Badge>
+                  )}
+                  <Link href="/todo">
+                    <Button variant="outline" size="sm" className="h-8">
+                      All Tasks
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {myFocus.today.length === 0 && myFocus.overdue.length === 0 ? (
+                <div className="text-muted-foreground text-center py-6 border-2 border-dashed border-slate-100 rounded-lg bg-slate-50/30">
+                  No tasks in focus right now.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
+                  {myFocus.overdue.map((task) => (
+                    <Link key={`overdue-${task.id}`} href={`/todo?taskId=${task.id}`}>
+                      <a className="block">
+                        <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{task.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Due {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No date"}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">
+                            Overdue
+                          </span>
+                        </div>
+                      </a>
+                    </Link>
+                  ))}
+                  {myFocus.today.map((task) => (
+                    <Link key={`today-${task.id}`} href={`/todo?taskId=${task.id}`}>
+                      <a className="block">
+                        <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{task.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Due {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No date"}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-0.5">
+                            My Day
+                          </span>
+                        </div>
+                      </a>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.1 }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Bell className="h-5 w-5 text-primary" />
+              Notifications
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {recentNotifications.length === 0 ? (
+              <div className="text-muted-foreground text-center py-6">
+                No notifications yet.
+              </div>
+            ) : (
+              recentNotifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {formatNotification(notification)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {notification.createdAt
+                        ? new Date(notification.createdAt).toLocaleString()
+                        : "Unknown time"}
+                    </p>
+                  </div>
+                  <Badge variant="secondary" className="text-xs">
+                    {notification.type}
+                  </Badge>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
     </div>
   );
 }

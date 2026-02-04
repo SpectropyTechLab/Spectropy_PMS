@@ -40,6 +40,7 @@ export function Sidebar({ isMobileOpen, onMobileClose }: SidebarProps) {
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { label: "Projects", href: "/projects", icon: FolderKanban },
     { label: "Tasks", href: "/tasks", icon: CheckSquare },
+    { label: "To Do", href: "/todo", icon: CheckSquare },
     { label: "Reports", href: "/reports", icon: BarChart3 },
     { label: "User Management", href: "/users", icon: Shield },
     { label: "Activity Logs", href: "/logs", icon: ScrollText },
@@ -49,6 +50,7 @@ export function Sidebar({ isMobileOpen, onMobileClose }: SidebarProps) {
     { label: "Dashboard", href: "/user/dashboard", icon: LayoutDashboard },
     { label: "My Projects", href: "/user/projects", icon: FolderKanban },
     { label: "My Tasks", href: "/user/tasks", icon: CheckSquare },
+    { label: "To Do", href: "/todo", icon: CheckSquare },
   ];
 
   const navItems = userRole === "Admin" ? adminNavItems : userNavItems;

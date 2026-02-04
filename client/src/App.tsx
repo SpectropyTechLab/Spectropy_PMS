@@ -9,6 +9,7 @@ import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
 import ProjectBoard from "@/pages/ProjectBoard";
 import Reports from "@/pages/Reports";
+import TodoPage from "@/pages/Todo";
 import Auth from "@/pages/Auth";
 import UserDashboard from "@/pages/UserDashboard";
 import UserProjects from "@/pages/UserProjects";
@@ -53,6 +54,13 @@ function Router() {
         <ProtectedRoute role="Admin">
           <Layout>
             <Reports />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/todo">
+        <ProtectedRoute>
+          <Layout>
+            <TodoPage />
           </Layout>
         </ProtectedRoute>
       </Route>

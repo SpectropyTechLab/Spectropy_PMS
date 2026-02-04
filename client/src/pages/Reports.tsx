@@ -38,18 +38,22 @@ export default function Reports() {
     queryKey: ["/api/users"],
   });
 
+  // Filter projects based on permissions
   const availableProjects = isAdmin
     ? projects
     : projects.filter((p) => {
+      // Add your logic for non-admin user project access here if needed
       return true;
     });
 
+  // Set default project selection
   useEffect(() => {
     if (availableProjects.length > 0 && !selectedProjectId) {
       setSelectedProjectId(String(availableProjects[0].id));
     }
   }, [availableProjects, selectedProjectId]);
 
+  // Set default user selection
   useEffect(() => {
     if (!isAdmin && currentUserId && !selectedUserId) {
       setSelectedUserId(String(currentUserId));
@@ -62,119 +66,133 @@ export default function Reports() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-2 sm:p-6 space-y-4 sm:space-y-6 max-w-[100vw] overflow-x-hidden">
+      {/* Header Section */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
+        className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
       >
         <div>
-          <h1 className="text-3xl font-bold" data-testid="text-reports-title">
-            <BarChart3 className="inline-block h-8 w-8 mr-2 text-primary" />
-            Reports & Analytics
+          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2" data-testid="text-reports-title">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <BarChart3 className="h-6 w-6 text-primary" />
+            </div>
+            Reports
           </h1>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground mt-1 hidden sm:block">
             Comprehensive analytics dashboard for your projects and tasks
           </p>
         </div>
-        <Button onClick={handleRefresh} variant="outline" data-testid="button-refresh-reports">
+        <Button
+          onClick={handleRefresh}
+          variant="outline"
+          size="sm"
+          className="w-full sm:w-auto"
+          data-testid="button-refresh-reports"
+        >
           <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
+          Refresh Data
         </Button>
       </motion.div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-4 mb-6">
-              <TabsTrigger value="projects" className="gap-2" data-testid="tab-projects">
+      {/* Main Content Area */}
+      <Card className="border-0 sm:border shadow-none sm:shadow-sm bg-transparent sm:bg-card">
+        <CardContent className="p-0 sm:p-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
+            {/* Responsive Tabs List: 2 cols on mobile, 4 cols on desktop */}
+            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto gap-2 bg-muted/50 p-1">
+              <TabsTrigger value="projects" className="gap-2 py-2 data-[state=active]:bg-background data-[state=active]:shadow-sm" data-testid="tab-projects">
                 <FolderKanban className="h-4 w-4" />
-                <span className="hidden sm:inline">Projects</span>
+                <span>Projects</span>
               </TabsTrigger>
-              <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
+              <TabsTrigger value="users" className="gap-2 py-2 data-[state=active]:bg-background data-[state=active]:shadow-sm" data-testid="tab-users">
                 <Users className="h-4 w-4" />
-                <span className="hidden sm:inline">Users</span>
+                <span>Users</span>
               </TabsTrigger>
-              <TabsTrigger value="deadlines" className="gap-2" data-testid="tab-deadlines">
+              <TabsTrigger value="deadlines" className="gap-2 py-2 data-[state=active]:bg-background data-[state=active]:shadow-sm" data-testid="tab-deadlines">
                 <Calendar className="h-4 w-4" />
-                <span className="hidden sm:inline">Deadlines</span>
+                <span>Deadlines</span>
               </TabsTrigger>
-              <TabsTrigger value="buckets" className="gap-2" data-testid="tab-buckets">
+              <TabsTrigger value="buckets" className="gap-2 py-2 data-[state=active]:bg-background data-[state=active]:shadow-sm" data-testid="tab-buckets">
                 <Layers className="h-4 w-4" />
-                <span className="hidden sm:inline">Buckets</span>
+                <span>Buckets</span>
               </TabsTrigger>
             </TabsList>
 
             <AnimatePresence mode="wait">
-              <TabsContent key="projects" value="projects" className="mt-0">
-                <motion.div
-                  key="projects"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <ProjectReports
-                    selectedProjectId={selectedProjectId}
-                    onProjectChange={setSelectedProjectId}
-                    projects={availableProjects}
-                    isAdmin={isAdmin}
-                  />
-                </motion.div>
-              </TabsContent>
+              <div className="min-h-[400px]">
+                <TabsContent key="projects" value="projects" className="mt-0 focus-visible:ring-0">
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ProjectReports
+                      selectedProjectId={selectedProjectId}
+                      onProjectChange={setSelectedProjectId}
+                      projects={availableProjects}
+                      users={users}
+                      isAdmin={isAdmin}
+                    />
+                  </motion.div>
+                </TabsContent>
 
-              <TabsContent key="users" value="users" className="mt-0">
-                <motion.div
-                  key="users"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <UserReports
-                    selectedUserId={selectedUserId}
-                    onUserChange={setSelectedUserId}
-                    users={users}
-                    isAdmin={isAdmin}
-                    currentUserId={currentUserId}
-                  />
-                </motion.div>
-              </TabsContent>
+                <TabsContent key="users" value="users" className="mt-0 focus-visible:ring-0">
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <UserReports
+                      selectedUserId={selectedUserId}
+                      onUserChange={setSelectedUserId}
+                      users={users}
+                      projects={availableProjects}
+                      isAdmin={isAdmin}
+                      currentUserId={currentUserId}
+                    />
+                  </motion.div>
+                </TabsContent>
 
-              <TabsContent key="deadlines" value="deadlines" className="mt-0">
-                <motion.div
-                  key="deadlines"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <DeadlineReports
-                    isAdmin={isAdmin}
-                    currentUserId={currentUserId}
-                  />
-                </motion.div>
-              </TabsContent>
+                <TabsContent key="deadlines" value="deadlines" className="mt-0 focus-visible:ring-0">
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <DeadlineReports
+                      projects={availableProjects}
+                      users={users}
+                      isAdmin={isAdmin}
+                      currentUserId={currentUserId}
+                    />
+                  </motion.div>
+                </TabsContent>
 
-              <TabsContent key="buckets" value="buckets" className="mt-0">
-                <motion.div
-                  key="buckets"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <BucketReports
-                    selectedBucketId={selectedBucketId}
-                    onBucketChange={setSelectedBucketId}
-                    selectedProjectFilter={bucketProjectFilter}
-                    onProjectFilterChange={setBucketProjectFilter}
-                    projects={availableProjects}
-                    isAdmin={isAdmin}
-                    currentUserId={currentUserId}
-                  />
-                </motion.div>
-              </TabsContent>
+                <TabsContent key="buckets" value="buckets" className="mt-0 focus-visible:ring-0">
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <BucketReports
+                      selectedBucketId={selectedBucketId}
+                      onBucketChange={setSelectedBucketId}
+                      selectedProjectFilter={bucketProjectFilter}
+                      onProjectFilterChange={setBucketProjectFilter}
+                      projects={availableProjects}
+                      users={users}
+                      isAdmin={isAdmin}
+                      currentUserId={currentUserId}
+                    />
+                  </motion.div>
+                </TabsContent>
+              </div>
             </AnimatePresence>
           </Tabs>
         </CardContent>

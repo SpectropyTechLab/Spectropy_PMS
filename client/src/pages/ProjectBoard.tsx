@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -76,9 +76,18 @@ interface BucketWithTasks extends Bucket {
   tasks: Task[];
 }
 
+type BoardView = "stage" | "assignee" | "due_date";
+
+interface BoardColumn {
+  id: string;
+  title: string;
+  tasks: Task[];
+  bucket?: BucketWithTasks;
+}
+
 export default function ProjectBoard() {
   const { id } = useParams<{ id: string }>();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const projectId = Number(id);
   const { toast } = useToast();
   const {
@@ -142,15 +151,17 @@ export default function ProjectBoard() {
     [],
   );
   const [newChecklistItem, setNewChecklistItem] = useState("");
+  const [viewMode, setViewMode] = useState<BoardView>("stage");
   const [taskSearch, setTaskSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [dueDateFilter, setDueDateFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
+  const hasOpenedFromQuery = useRef(false);
 
   const { uploadFile, isUploading } = useUpload();
-  const [expandedBuckets, setExpandedBuckets] = useState<Record<number, boolean>>({});
+  const [expandedBuckets, setExpandedBuckets] = useState<Record<string, boolean>>({});
 
   const { data: project, isLoading: projectLoading } = useQuery<Project>({
     queryKey: ["/api/projects", projectId],
@@ -440,6 +451,12 @@ export default function ProjectBoard() {
     estimate: "Estimate",
   };
 
+  const viewLabels: Record<BoardView, string> = {
+    stage: "Stage",
+    assignee: "Assignee",
+    due_date: "Due Date",
+  };
+
   const hasActiveFilters =
     normalizedSearch.length > 0 ||
     statusFilter !== "all" ||
@@ -454,6 +471,96 @@ export default function ProjectBoard() {
       .filter((task) => task.bucketId === bucket.id)
       .sort((a, b) => a.position - b.position),
   }));
+
+  const getDueDateBucket = (dueDate: Task["dueDate"]) => {
+    if (!dueDate) return "next";
+    const parsed = new Date(dueDate);
+    if (Number.isNaN(parsed.getTime())) return "next";
+
+    const startOfToday = new Date(today);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const startOfDayAfterTomorrow = new Date(startOfToday);
+    startOfDayAfterTomorrow.setDate(startOfDayAfterTomorrow.getDate() + 2);
+
+    const dueStart = new Date(
+      parsed.getFullYear(),
+      parsed.getMonth(),
+      parsed.getDate(),
+    );
+
+    if (dueStart < startOfToday) return "overdue";
+    if (dueStart.getTime() === startOfToday.getTime()) return "today";
+    if (dueStart.getTime() === startOfTomorrow.getTime()) return "tomorrow";
+    if (dueStart >= startOfDayAfterTomorrow) return "next";
+    return "next";
+  };
+
+  const boardColumns: BoardColumn[] = (() => {
+    if (viewMode === "stage") {
+      return bucketsWithTasks.map((bucket) => ({
+        id: `stage-${bucket.id}`,
+        title: bucket.title,
+        tasks: sortTasks(
+          filteredTasks.filter((task) => task.bucketId === bucket.id),
+        ),
+        bucket,
+      }));
+    }
+
+    if (viewMode === "assignee") {
+      const assignedUserIds = new Set<number>();
+      tasks.forEach((task) => {
+        getTaskAssigneeIds(task).forEach((id) => assignedUserIds.add(id));
+      });
+      const sortedUsers = users
+        .filter((user) => assignedUserIds.has(user.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const unassignedTasks = filteredTasks.filter(
+        (task) => getTaskAssigneeIds(task).length === 0,
+      );
+
+      return [
+        {
+          id: "assignee-unassigned",
+          title: "Unassigned",
+          tasks: sortTasks(unassignedTasks),
+        },
+        ...sortedUsers.map((user) => ({
+          id: `assignee-${user.id}`,
+          title: user.name,
+          tasks: sortTasks(
+            filteredTasks.filter((task) =>
+              getTaskAssigneeIds(task).includes(user.id),
+            ),
+          ),
+        })),
+      ];
+    }
+
+    const groups: Record<"overdue" | "today" | "tomorrow" | "next", Task[]> = {
+      overdue: [],
+      today: [],
+      tomorrow: [],
+      next: [],
+    };
+
+    filteredTasks.forEach((task) => {
+      const key = getDueDateBucket(task.dueDate);
+      if (key === "overdue" || key === "today" || key === "tomorrow") {
+        groups[key].push(task);
+        return;
+      }
+      groups.next.push(task);
+    });
+
+    return [
+      { id: "due-overdue", title: "Overdue", tasks: sortTasks(groups.overdue) },
+      { id: "due-today", title: "Today", tasks: sortTasks(groups.today) },
+      { id: "due-tomorrow", title: "Tomorrow", tasks: sortTasks(groups.tomorrow) },
+      { id: "due-next", title: "Next Dates", tasks: sortTasks(groups.next) },
+    ];
+  })();
 
   const handleDragStart = (task: Task) => {
     setDraggedTask(task);
@@ -550,6 +657,22 @@ export default function ProjectBoard() {
     setEditTaskAttachments(task.attachments || []);
     setIsEditTaskOpen(true);
   };
+
+  useEffect(() => {
+    if (hasOpenedFromQuery.current) return;
+    const search = location.split("?")[1];
+    if (!search) return;
+    const params = new URLSearchParams(search);
+    if (params.get("edit") !== "1") return;
+    const taskIdParam = params.get("taskId");
+    if (!taskIdParam) return;
+    const taskId = Number(taskIdParam);
+    if (!taskId) return;
+    const taskToEdit = tasks.find((task) => task.id === taskId);
+    if (!taskToEdit) return;
+    hasOpenedFromQuery.current = true;
+    handleOpenEditTask(taskToEdit);
+  }, [location, tasks]);
 
   const handleSaveEditTask = () => {
     if (!editingTask || !editTaskTitle.trim()) return;
@@ -907,219 +1030,188 @@ export default function ProjectBoard() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 md:p-4 border-b bg-white dark:bg-slate-900">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 md:p-5 border-b bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm sticky top-0 z-20">
+        {/* Project Info Section: Uses flex-1 and min-w-0 to prevent overflow */}
+        <div className="flex items-start gap-3 md:gap-4 min-w-0 flex-1">
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon"
             onClick={() => navigate("/projects")}
             data-testid="button-back-to-projects"
-            className="flex-shrink-0"
+            className="flex-shrink-0 rounded-full h-9 w-9 mt-0.5 border-slate-200 dark:border-slate-800"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div className="min-w-0">
+
+          <div className="min-w-0 flex-1">
             <h1
-              className="text-lg md:text-xl font-semibold truncate"
+              className="text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate"
               data-testid="text-project-name"
             >
               {project.name}
             </h1>
-            <p className="text-xs md:text-sm text-muted-foreground truncate">
+            <p className="text-sm text-muted-foreground line-clamp-1 hover:line-clamp-none transition-all cursor-default" title={project.description ?? ""}>
               {project.description || "No description"}
             </p>
           </div>
         </div>
 
+        {/* Actions Section: Wraps nicely on mobile */}
         <div className="flex flex-wrap items-center gap-2">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" data-testid="button-filter-tasks">
-                <Filter className="h-4 w-4 mr-2" />
-                Filter
+          {/* Grouped Controls */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="button-filter-tasks" className="h-9">
+                  <Filter className="h-4 w-4 mr-2" />
+                  Filter
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-4" align="end">
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Search</label>
+                    <Input
+                      placeholder="Search tasks..."
+                      value={taskSearch}
+                      onChange={(e) => setTaskSearch(e.target.value)}
+                      className="mt-2"
+                      data-testid="input-task-search"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Status</label>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="mt-2" data-testid="select-filter-status">
+                        <SelectValue placeholder="All status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All status</SelectItem>
+                        <SelectItem value="todo">Not Started</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Priority</label>
+                    <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                      <SelectTrigger className="mt-2" data-testid="select-filter-priority">
+                        <SelectValue placeholder="All priority" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All priority</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="low">Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Assigned To</label>
+                    <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                      <SelectTrigger className="mt-2" data-testid="select-filter-assignee">
+                        <SelectValue placeholder="All assignees" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All assignees</SelectItem>
+                        <SelectItem value="me">Assigned to me</SelectItem>
+                        <SelectItem value="unassigned">Unassigned</SelectItem>
+                        {users.map((user) => (
+                          <SelectItem key={user.id} value={String(user.id)}>
+                            {user.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Button variant="ghost" className="w-full" onClick={resetTaskFilters} data-testid="button-clear-task-filters">
+                    <X className="h-4 w-4 mr-2" />
+                    Clear filters
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9" data-testid="button-view-mode">
+                  View: {viewLabels[viewMode]}
+                  <ChevronDown className="h-4 w-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setViewMode("stage")}>Stage</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setViewMode("assignee")}>Assignee</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setViewMode("due_date")}>Due Date</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9" data-testid="button-sort-tasks">
+                  <ArrowUpDown className="h-4 w-4 mr-2" />
+                  Sort: {sortLabels[sortBy] ?? "Newest"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {Object.entries(sortLabels).map(([key, label]) => (
+                  <DropdownMenuItem key={key} onClick={() => setSortBy(key)}>
+                    {label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetTaskFilters}
+                className="h-9 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400"
+              >
+                Reset
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-4" align="start">
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Search
-                  </label>
+            )}
+          </div>
+
+          {/* Primary Action Button */}
+          {viewMode === "stage" && (
+            <Dialog open={isNewBucketOpen} onOpenChange={setIsNewBucketOpen}>
+              <DialogTrigger asChild>
+                <Button className="h-9 shadow-sm" data-testid="button-add-bucket">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Bucket
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add New Bucket</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
                   <Input
-                    placeholder="Search tasks..."
-                    value={taskSearch}
-                    onChange={(e) => setTaskSearch(e.target.value)}
-                    className="mt-2"
-                    data-testid="input-task-search"
+                    placeholder="Bucket title..."
+                    value={newBucketTitle}
+                    onChange={(e) => setNewBucketTitle(e.target.value)}
+                    data-testid="input-bucket-title"
                   />
                 </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Status
-                  </label>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="mt-2" data-testid="select-filter-status">
-                      <SelectValue placeholder="All status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All status</SelectItem>
-                      <SelectItem value="todo">Not Started</SelectItem>
-                      <SelectItem value="in_progress">In Progress</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Priority
-                  </label>
-                  <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-                    <SelectTrigger className="mt-2" data-testid="select-filter-priority">
-                      <SelectValue placeholder="All priority" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All priority</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="low">Low</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Assigned To
-                  </label>
-                  <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
-                    <SelectTrigger className="mt-2" data-testid="select-filter-assignee">
-                      <SelectValue placeholder="All assignees" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All assignees</SelectItem>
-                      <SelectItem value="me">Assigned to me</SelectItem>
-                      <SelectItem value="unassigned">Unassigned</SelectItem>
-                      {users.map((user) => (
-                        <SelectItem key={user.id} value={String(user.id)}>
-                          {user.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Due Date
-                  </label>
-                  <Select value={dueDateFilter} onValueChange={setDueDateFilter}>
-                    <SelectTrigger className="mt-2" data-testid="select-filter-due-date">
-                      <SelectValue placeholder="All due dates" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All due dates</SelectItem>
-                      <SelectItem value="overdue">Overdue</SelectItem>
-                      <SelectItem value="next7">Due in 7 days</SelectItem>
-                      <SelectItem value="nodate">No due date</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button
-                  variant="ghost"
-                  className="w-full"
-                  onClick={resetTaskFilters}
-                  data-testid="button-clear-task-filters"
-                >
-                  <X className="h-4 w-4 mr-2" />
-                  Clear filters
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" data-testid="button-sort-tasks">
-                <ArrowUpDown className="h-4 w-4 mr-2" />
-                Sort: {sortLabels[sortBy] ?? "Newest"}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => setSortBy("newest")}>
-                Newest
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("oldest")}>
-                Oldest
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("priority")}>
-                Priority
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("dueDate")}>
-                Due date
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("startDate")}>
-                Start date
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("estimate")}>
-                Estimate
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy("title")}>
-                Title
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={resetTaskFilters}
-              data-testid="button-reset-task-filters"
-            >
-              Reset
-            </Button>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancel</Button>
+                  </DialogClose>
+                  <Button onClick={handleAddBucket} disabled={createBucketMutation.isPending}>
+                    Add Bucket
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           )}
         </div>
-
-        <Dialog open={isNewBucketOpen} onOpenChange={setIsNewBucketOpen}>
-          <DialogTrigger asChild>
-            <Button
-              variant="outline"
-              className="w-full sm:w-auto"
-              data-testid="button-add-bucket"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Bucket
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Bucket</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <Input
-                placeholder="Bucket title..."
-                value={newBucketTitle}
-                onChange={(e) => setNewBucketTitle(e.target.value)}
-                data-testid="input-bucket-title"
-              />
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button variant="outline">Cancel</Button>
-              </DialogClose>
-              <Button
-                onClick={handleAddBucket}
-                disabled={createBucketMutation.isPending}
-                data-testid="button-submit-bucket"
-              >
-                Add Bucket
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
 
       <div className="flex-1 overflow-x-auto p-2 md:p-4 ">
@@ -1127,125 +1219,135 @@ export default function ProjectBoard() {
           className="flex gap-3 md:gap-4 h-full pb-4"
           style={{ minWidth: "max-content" }}
         >
-          {bucketsWithTasks.map((bucket) => {
-            const bucketFilteredTasks = filteredTasks.filter(
-              (task) => task.bucketId === bucket.id,
-            );
-            const sortedTasks = sortTasks(bucketFilteredTasks);
-            const activeTasks = sortedTasks.filter(
-              (t) => t.status !== "completed",
-            );
-            const completedTasks = sortedTasks.filter(
-              (t) => t.status === "completed",
-            );
+          {boardColumns.map((column) => {
+            const isStageView = viewMode === "stage";
+            const bucket = column.bucket;
+            const bucketFilteredTasks = column.tasks;
 
-            const isExpanded = expandedBuckets[bucket.id] ?? false;
+            const expansionKey = column.id;
             return (
               <motion.div
-                key={bucket.id}
+                key={column.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="flex flex-col w-72 md:w-80 bg-slate-50 dark:bg-slate-800/50 rounded-lg flex-shrink-0"
-                data-testid={`bucket-column-${bucket.id}`}
+                data-testid={
+                  isStageView && bucket
+                    ? `bucket-column-${bucket.id}`
+                    : `bucket-column-${column.id}`
+                }
               >
                 <div className="flex items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
-                  <div className="flex items-center gap-2">
-                    {editingBucketId === bucket.id ? (
-                      <Input
-                        value={editingBucketTitle}
-                        onChange={(e) => setEditingBucketTitle(e.target.value)}
-                        onBlur={() => handleSaveBucketTitle(bucket.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleSaveBucketTitle(bucket.id);
-                          else if (e.key === "Escape") {
-                            setEditingBucketId(null);
-                            setEditingBucketTitle("");
-                          }
-                        }}
-                        autoFocus
-                        className="h-7 w-40 text-sm font-medium"
-                        data-testid={`input-edit-bucket-title-${bucket.id}`}
-                      />
-                    ) : (
-                      <h3
-                        className="font-medium cursor-pointer hover:text-primary transition-colors"
-                        onClick={() => {
-                          setEditingBucketId(bucket.id);
-                          setEditingBucketTitle(bucket.title);
-                        }}
-                        data-testid={`text-bucket-title-${bucket.id}`}
-                      >
-                        {bucket.title}
-                      </h3>
-                    )}
-                    <Badge variant="secondary" className="text-xs">
-                      {hasActiveFilters
-                        ? `${bucketFilteredTasks.length}/${bucket.tasks.length}`
-                        : bucket.tasks.length}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => {
-                        if (!canCreateTask) {
-                          toast({
-                            title: "Permission denied",
-                            description:
-                              "You do not have permission to create customers",
-                            variant: "destructive",
-                          });
-                          return;
-                        }
-                        setSelectedBucketId(bucket.id);
-                        setIsNewTaskOpen(true);
-                      }}
-                      disabled={!canCreateTask}
-                      data-testid={`button-add-task-${bucket.id}`}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                  {isStageView && bucket ? (
+                    <>
+                      <div className="flex items-center gap-2">
+                        {editingBucketId === bucket.id ? (
+                          <Input
+                            value={editingBucketTitle}
+                            onChange={(e) => setEditingBucketTitle(e.target.value)}
+                            onBlur={() => handleSaveBucketTitle(bucket.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveBucketTitle(bucket.id);
+                              else if (e.key === "Escape") {
+                                setEditingBucketId(null);
+                                setEditingBucketTitle("");
+                              }
+                            }}
+                            autoFocus
+                            className="h-7 w-40 text-sm font-medium"
+                            data-testid={`input-edit-bucket-title-${bucket.id}`}
+                          />
+                        ) : (
+                          <h3
+                            className="font-medium cursor-pointer hover:text-primary transition-colors"
+                            onClick={() => {
+                              setEditingBucketId(bucket.id);
+                              setEditingBucketTitle(bucket.title);
+                            }}
+                            data-testid={`text-bucket-title-${bucket.id}`}
+                          >
+                            {bucket.title}
+                          </h3>
+                        )}
+                        <Badge variant="secondary" className="text-xs">
+                          {hasActiveFilters
+                            ? `${bucketFilteredTasks.length}/${bucket.tasks.length}`
+                            : bucket.tasks.length}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          data-testid={`button-bucket-menu-${bucket.id}`}
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
                           onClick={() => {
-                            setEditingBucketId(bucket.id);
-                            setEditingBucketTitle(bucket.title);
+                            if (!canCreateTask) {
+                              toast({
+                                title: "Permission denied",
+                                description:
+                                  "You do not have permission to create customers",
+                                variant: "destructive",
+                              });
+                              return;
+                            }
+                            setSelectedBucketId(bucket.id);
+                            setIsNewTaskOpen(true);
                           }}
+                          disabled={!canCreateTask}
+                          data-testid={`button-add-task-${bucket.id}`}
                         >
-                          <Edit className="h-4 w-4 mr-2" />
-                          Rename Stage
-                        </DropdownMenuItem>
-                        {/* END ADD */}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => handleDeleteBucket(bucket)}
-                          data-testid={`button-delete-bucket-${bucket.id}`}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Delete Stage
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              data-testid={`button-bucket-menu-${bucket.id}`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditingBucketId(bucket.id);
+                                setEditingBucketTitle(bucket.title);
+                              }}
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Rename Stage
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => handleDeleteBucket(bucket)}
+                              data-testid={`button-delete-bucket-${bucket.id}`}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Stage
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h3 className="font-medium truncate" title={column.title}>
+                        {column.title}
+                      </h3>
+                      <Badge variant="secondary" className="text-xs">
+                        {bucketFilteredTasks.length}
+                      </Badge>
+                    </div>
+                  )}
                 </div>
 
                 <div
                   className="flex-1 p-2 space-y-2 overflow-y-auto min-h-[200px]"
                   onDragOver={(e) => {
+                    if (!isStageView || !bucket) return;
                     e.preventDefault();
                     e.currentTarget.classList.add(
                       "bg-slate-100",
@@ -1253,12 +1355,14 @@ export default function ProjectBoard() {
                     );
                   }}
                   onDragLeave={(e) => {
+                    if (!isStageView || !bucket) return;
                     e.currentTarget.classList.remove(
                       "bg-slate-100",
                       "dark:bg-slate-700/50",
                     );
                   }}
                   onDrop={(e) => {
+                    if (!isStageView || !bucket) return;
                     e.preventDefault();
                     e.currentTarget.classList.remove(
                       "bg-slate-100",
@@ -1272,13 +1376,16 @@ export default function ProjectBoard() {
                   <div
                     className="flex-1 p-2 space-y-2 overflow-y-auto min-h-[200px]"
                     onDragOver={(e) => {
+                      if (!isStageView || !bucket) return;
                       e.preventDefault();
                       e.currentTarget.classList.add("bg-slate-100", "dark:bg-slate-700/50");
                     }}
                     onDragLeave={(e) => {
+                      if (!isStageView || !bucket) return;
                       e.currentTarget.classList.remove("bg-slate-100", "dark:bg-slate-700/50");
                     }}
                     onDrop={(e) => {
+                      if (!isStageView || !bucket) return;
                       e.preventDefault();
                       e.currentTarget.classList.remove("bg-slate-100", "dark:bg-slate-700/50");
                       handleDrop(bucket.id, bucket.tasks.length);
@@ -1295,7 +1402,7 @@ export default function ProjectBoard() {
                         (t) => t.status === "completed",
                       );
 
-                      const isExpanded = expandedBuckets[bucket.id] ?? false;
+                      const isExpanded = expandedBuckets[expansionKey] ?? false;
 
                       // Helper to render the actual Card UI to avoid duplication
                       const renderTaskCard = (task: Task) => {
@@ -1308,9 +1415,11 @@ export default function ProjectBoard() {
                             key={task.id}
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
-                            draggable
-                            onDragStart={() => handleDragStart(task)}
-                            onDragEnd={handleDragEnd}
+                            draggable={isStageView}
+                            onDragStart={
+                              isStageView ? () => handleDragStart(task) : undefined
+                            }
+                            onDragEnd={isStageView ? handleDragEnd : undefined}
                             className={`  active:cursor-grabbing ${draggedTask?.id === task.id ? "opacity-50" : ""}`}
                             data-testid={`task-card-${task.id}`}
                           >
@@ -1588,7 +1697,12 @@ export default function ProjectBoard() {
                             <div className="pt-4 pb-2">
                               <div
                                 className="flex items-center gap-2 cursor-pointer group"
-                                onClick={() => setExpandedBuckets(prev => ({ ...prev, [bucket.id]: !isExpanded }))}
+                                onClick={() =>
+                                  setExpandedBuckets((prev) => ({
+                                    ...prev,
+                                    [expansionKey]: !isExpanded,
+                                  }))
+                                }
                               >
                                 <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700 group-hover:bg-primary/40 transition-colors" />
                                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground whitespace-nowrap bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
@@ -1612,16 +1726,18 @@ export default function ProjectBoard() {
             )
           })}
 
-          <div
-            className="flex items-center justify-center w-80 min-h-[200px] border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg hover-elevate cursor-pointer"
-            onClick={() => setIsNewBucketOpen(true)}
-            data-testid="button-add-new-bucket"
-          >
-            <div className="text-center text-muted-foreground">
-              <Plus className="h-8 w-8 mx-auto mb-2" />
-              <p>Add Stage</p>
+          {viewMode === "stage" && (
+            <div
+              className="flex items-center justify-center w-80 min-h-[200px] border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg hover-elevate cursor-pointer"
+              onClick={() => setIsNewBucketOpen(true)}
+              data-testid="button-add-new-bucket"
+            >
+              <div className="text-center text-muted-foreground">
+                <Plus className="h-8 w-8 mx-auto mb-2" />
+                <p>Add Stage</p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

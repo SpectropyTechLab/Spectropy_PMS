@@ -416,21 +416,25 @@ export async function registerRoutes(
         const project = await storage.getProject(task.projectId);
         const currentUser = await storage.getUser(getCurrentUserId(req));
 
-        if (assignee?.email && project) {
-          const { subject, html } = createTaskAssignmentEmail({
-            taskTitle: task.title,
-            taskDescription: task.description || undefined,
-            projectName: project.name,
-            assignedBy: currentUser?.name || "System",
-            dueDate: task.dueDate,
-          });
+        if (assignee && project) {
+          let sent = false;
+          if (assignee.email) {
+            const { subject, html } = createTaskAssignmentEmail({
+              taskTitle: task.title,
+              taskDescription: task.description || undefined,
+              projectName: project.name,
+              assignedBy: currentUser?.name || "System",
+              dueDate: task.dueDate,
+            });
 
-          const sent = await sendEmail({ to: assignee.email, subject, html });
+            sent = await sendEmail({ to: assignee.email, subject, html });
+          }
+
           await storage.createNotification({
             taskId: task.id,
             userId: assignee.id,
             type: "assignment",
-            status: sent ? "sent" : "failed",
+            status: sent ? "sent" : "in_app",
           });
         }
       }
@@ -485,43 +489,51 @@ export async function registerRoutes(
             ? await storage.getUser(task.assigneeId)
             : null;
 
-          if (projectOwner?.email) {
-            const { subject, html } = createTaskCompletionEmail({
-              taskTitle: task.title,
-              projectName: project.name,
-              assigneeName: assignee?.name || "Unknown",
-            });
+          if (projectOwner) {
+            let sent = false;
+            if (projectOwner.email) {
+              const { subject, html } = createTaskCompletionEmail({
+                taskTitle: task.title,
+                projectName: project.name,
+                assigneeName: assignee?.name || "Unknown",
+              });
 
-            const sent = await sendEmail({
-              to: projectOwner.email,
-              subject,
-              html,
-            });
+              sent = await sendEmail({
+                to: projectOwner.email,
+                subject,
+                html,
+              });
+            }
+
             await storage.createNotification({
               taskId: task.id,
               userId: projectOwner.id,
               type: "completion",
-              status: sent ? "sent" : "failed",
+              status: sent ? "sent" : "in_app",
             });
           }
         } else if (isNewAssignment && task.assigneeId) {
           const assignee = await storage.getUser(task.assigneeId);
 
-          if (assignee?.email) {
-            const { subject, html } = createTaskAssignmentEmail({
-              taskTitle: task.title,
-              taskDescription: task.description || undefined,
-              projectName: project.name,
-              assignedBy: currentUser?.name || "System",
-              dueDate: task.dueDate,
-            });
+          if (assignee) {
+            let sent = false;
+            if (assignee.email) {
+              const { subject, html } = createTaskAssignmentEmail({
+                taskTitle: task.title,
+                taskDescription: task.description || undefined,
+                projectName: project.name,
+                assignedBy: currentUser?.name || "System",
+                dueDate: task.dueDate,
+              });
 
-            const sent = await sendEmail({ to: assignee.email, subject, html });
+              sent = await sendEmail({ to: assignee.email, subject, html });
+            }
+
             await storage.createNotification({
               taskId: task.id,
               userId: assignee.id,
               type: "assignment",
-              status: sent ? "sent" : "failed",
+              status: sent ? "sent" : "in_app",
             });
           }
         } else if (Object.keys(input).length > 0) {
@@ -531,7 +543,9 @@ export async function registerRoutes(
 
           for (const userId of Array.from(recipientIds)) {
             const user = await storage.getUser(userId);
-            if (user?.email) {
+            if (!user) continue;
+            let sent = false;
+            if (user.email) {
               const modificationType = Object.keys(input).join(", ");
               const { subject, html } = createTaskUpdateEmail({
                 taskTitle: task.title,
@@ -541,14 +555,15 @@ export async function registerRoutes(
                 status: task.status,
               });
 
-              const sent = await sendEmail({ to: user.email, subject, html });
-              await storage.createNotification({
-                taskId: task.id,
-                userId: user.id,
-                type: "update",
-                status: sent ? "sent" : "failed",
-              });
+              sent = await sendEmail({ to: user.email, subject, html });
             }
+
+            await storage.createNotification({
+              taskId: task.id,
+              userId: user.id,
+              type: "update",
+              status: sent ? "sent" : "in_app",
+            });
           }
         }
       }
@@ -783,6 +798,12 @@ export async function registerRoutes(
   app.get(api.users.list.path, async (req, res) => {
     const users = await storage.getUsers();
     res.json(users);
+  });
+
+  app.get(api.notifications.list.path, async (req, res) => {
+    const userId = getCurrentUserId(req);
+    const notifications = await storage.getNotifications(userId);
+    res.json(notifications);
   });
 
   app.patch("/api/users/:id", async (req, res) => {
