@@ -1,11 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-function getUserIdHeader(): Record<string, string> {
-  if (typeof localStorage === "undefined") {
-    return {};
-  }
-  const userId = localStorage.getItem("userId");
-  return userId ? { "x-user-id": userId } : {};
+function getAuthHeaders(): Record<string, string> {
+  return {};
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -24,7 +20,7 @@ export async function apiRequest(
     method,
     headers: {
       ...(data ? { "Content-Type": "application/json" } : {}),
-      ...getUserIdHeader(),
+      ...getAuthHeaders(),
     },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
@@ -41,7 +37,7 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
     async ({ queryKey }) => {
       const res = await fetch(queryKey.join("/") as string, {
-        headers: getUserIdHeader(),
+        headers: getAuthHeaders(),
         credentials: "include",
       });
 

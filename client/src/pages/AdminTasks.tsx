@@ -50,7 +50,7 @@ export default function AdminTasks() {
   const { data: buckets = [] } = useQuery<Bucket[]>({
     queryKey: ["/api/buckets/all"],
     queryFn: async () => {
-      const res = await fetch("/api/buckets");
+      const res = await apiRequest("GET", "/api/buckets");
       return res.json();
     },
   });

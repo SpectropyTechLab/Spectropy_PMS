@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/queryClient";
 import { useState, useEffect } from "react";
 
 interface SidebarProps {
@@ -55,7 +56,12 @@ export function Sidebar({ isMobileOpen, onMobileClose }: SidebarProps) {
 
   const navItems = userRole === "Admin" ? adminNavItems : userNavItems;
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await apiRequest("POST", "/api/auth/logout");
+    } catch {
+      // Ignore errors and continue client-side logout.
+    }
     localStorage.removeItem("userRole");
     localStorage.removeItem("userId");
     localStorage.removeItem("userName");

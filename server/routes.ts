@@ -19,6 +19,13 @@ import {
   hasPermission,
   getUserWithPermissions
 } from "./permissions";
+import {
+  clearAuthCookie,
+  createSessionToken,
+  getCurrentUserId,
+  requireAuth,
+  setAuthCookie,
+} from "./auth";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -36,19 +43,6 @@ const SALT_ROUNDS = 10;
 
 function generateOTP(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-function getCurrentUserId(req: import("express").Request): number {
-
-  const userIdHeader = req.headers["x-user-id"];
-
-
-  if (userIdHeader) {
-    const id = Number(userIdHeader);
-    return Number.isNaN(id) ? 2 : id;
-  }
-
-  return 2;
 }
 
 function createHistoryEntry(
@@ -189,6 +183,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  app.use("/api", requireAuth);
+
   // Projects
   app.get(api.projects.list.path, async (req, res) => {
     const allProjects = await storage.getProjects();
@@ -1095,6 +1091,8 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
+      const token = createSessionToken(user.id);
+      setAuthCookie(res, token);
       const { password: _, ...safeUser } = user;
       res.json(safeUser);
     } catch (err) {
@@ -1103,6 +1101,11 @@ export async function registerRoutes(
       }
       throw err;
     }
+  });
+
+  app.post("/api/auth/logout", (_req, res) => {
+    clearAuthCookie(res);
+    res.status(204).send();
   });
 
   // Reports API

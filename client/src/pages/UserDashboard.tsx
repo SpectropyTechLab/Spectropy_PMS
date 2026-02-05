@@ -29,6 +29,7 @@ import {
   Legend,
 } from "recharts";
 import type { Notification, Project, Task } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 const startOfDay = (value: Date) =>
   new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -53,7 +54,7 @@ export default function UserDashboard() {
   const { data: myTasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks", { assigneeId: userId }],
     queryFn: async () => {
-      const res = await fetch(`/api/tasks?assigneeId=${userId}`);
+      const res = await apiRequest("GET", `/api/tasks?assigneeId=${userId}`);
       return res.json();
     },
     enabled: !!userId,

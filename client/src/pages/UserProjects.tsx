@@ -14,6 +14,7 @@ import { FolderKanban, Calendar, CheckCircle2 } from "lucide-react";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import type { Project, Task } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function UserProjects() {
   const userId = Number(localStorage.getItem("userId"));
@@ -22,7 +23,7 @@ export default function UserProjects() {
   const { data: myTasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks", { assigneeId: userId }],
     queryFn: async () => {
-      const res = await fetch(`/api/tasks?assigneeId=${userId}`);
+      const res = await apiRequest("GET", `/api/tasks?assigneeId=${userId}`);
       return res.json();
     },
     enabled: !!userId,

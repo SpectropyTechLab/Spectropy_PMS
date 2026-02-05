@@ -1,15 +1,14 @@
+import { apiRequest } from "@/lib/queryClient";
+
 export async function downloadAttachment(
     objectPath: string,
     fileName: string
 ) {
     // 1️⃣ Ask backend for signed download URL
-    const res = await fetch(
+    const res = await apiRequest(
+        "GET",
         `/api/uploads/download?path=${encodeURIComponent(objectPath)}`
     );
-
-    if (!res.ok) {
-        throw new Error("Failed to get download URL");
-    }
 
     const { downloadURL } = await res.json();
 

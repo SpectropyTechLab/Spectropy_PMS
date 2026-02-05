@@ -170,7 +170,7 @@ export default function ProjectBoard() {
   const { data: buckets = [], isLoading: bucketsLoading } = useQuery<Bucket[]>({
     queryKey: ["/api/buckets", projectId],
     queryFn: async () => {
-      const res = await fetch(`/api/buckets?projectId=${projectId}`);
+      const res = await apiRequest("GET", `/api/buckets?projectId=${projectId}`);
       return res.json();
     },
   });
@@ -178,7 +178,7 @@ export default function ProjectBoard() {
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks", projectId],
     queryFn: async () => {
-      const res = await fetch(`/api/tasks?projectId=${projectId}`);
+      const res = await apiRequest("GET", `/api/tasks?projectId=${projectId}`);
       return res.json();
     },
   });

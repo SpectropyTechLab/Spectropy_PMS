@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl, type CreateTaskRequest, type UpdateTaskRequest } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 
 export function useTasks(projectId?: number) {
   return useQuery({
@@ -11,8 +11,7 @@ export function useTasks(projectId?: number) {
       if (projectId) {
         url += `?projectId=${projectId}`;
       }
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch tasks");
+      const res = await apiRequest("GET", url);
       return api.tasks.list.responses[200].parse(await res.json());
     },
   });
@@ -24,12 +23,7 @@ export function useCreateTask() {
 
   return useMutation({
     mutationFn: async (data: CreateTaskRequest) => {
-      const res = await fetch(api.tasks.create.path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create task");
+      const res = await apiRequest("POST", api.tasks.create.path, data);
       return api.tasks.create.responses[201].parse(await res.json());
     },
     onSuccess: () => {
@@ -46,12 +40,7 @@ export function useUpdateTask() {
   return useMutation({
     mutationFn: async ({ id, ...updates }: { id: number } & UpdateTaskRequest) => {
       const url = buildUrl(api.tasks.update.path, { id });
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (!res.ok) throw new Error("Failed to update task");
+      const res = await apiRequest("PATCH", url, updates);
       return api.tasks.update.responses[200].parse(await res.json());
     },
     onSuccess: () => {
@@ -69,8 +58,7 @@ export function useDeleteTask() {
   return useMutation({
     mutationFn: async (id: number) => {
       const url = buildUrl(api.tasks.delete.path, { id });
-      const res = await fetch(url, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete task");
+      await apiRequest("DELETE", url);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });

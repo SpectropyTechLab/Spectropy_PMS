@@ -33,7 +33,7 @@ export default function UserTasks() {
   const { data: myTasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks", { assigneeId: userId }],
     queryFn: async () => {
-      const res = await fetch(`/api/tasks?assigneeId=${userId}`);
+      const res = await apiRequest("GET", `/api/tasks?assigneeId=${userId}`);
       return res.json();
     },
     enabled: !!userId,
@@ -42,7 +42,7 @@ export default function UserTasks() {
   const { data: buckets = [] } = useQuery<Bucket[]>({
     queryKey: ["/api/buckets/all"],
     queryFn: async () => {
-      const res = await fetch("/api/buckets");
+      const res = await apiRequest("GET", "/api/buckets");
       return res.json();
     },
   });
