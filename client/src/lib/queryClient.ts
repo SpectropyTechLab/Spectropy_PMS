@@ -1,5 +1,18 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+function forceLogout() {
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem("userRole");
+    localStorage.removeItem("userId");
+    localStorage.removeItem("userName");
+    localStorage.removeItem("userAvatar");
+    localStorage.removeItem("isAuthenticated");
+  }
+  if (typeof window !== "undefined") {
+    window.location.href = "/auth";
+  }
+}
+
 function getAuthHeaders(): Record<string, string> {
   return {};
 }
@@ -26,6 +39,9 @@ export async function apiRequest(
     credentials: "include",
   });
 
+  if (res.status === 401) {
+    forceLogout();
+  }
   await throwIfResNotOk(res);
   return res;
 }
@@ -41,6 +57,9 @@ export const getQueryFn: <T>(options: {
         credentials: "include",
       });
 
+      if (res.status === 401) {
+        forceLogout();
+      }
       if (unauthorizedBehavior === "returnNull" && res.status === 401) {
         return null;
       }

@@ -1,5 +1,6 @@
 import { useLocation } from "wouter";
 import { useEffect } from "react";
+import { apiRequest } from "@/lib/queryClient";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -18,6 +19,13 @@ export const ProtectedRoute = ({ children, role }: ProtectedRouteProps) => {
       setLocation("/auth");
     }
   }, [isAuthenticated, storedRole, role, setLocation]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !storedRole) return;
+    apiRequest("GET", "/api/users/current").catch(() => {
+      // apiRequest will force logout on 401
+    });
+  }, [isAuthenticated, storedRole]);
 
   if (!isAuthenticated || !storedRole || (role && storedRole !== role)) {
     return null;

@@ -23,11 +23,11 @@ const resendApiKey = process.env.RESEND_API_KEY;
 const resendFrom = process.env.RESEND_FROM;
 
 console.log(
-  `Email service: RESEND_API_KEY is ${resendApiKey ? "SET" : "NOT SET"
+  `\nEmail service: RESEND_API_KEY is ${resendApiKey ? "SET" : "NOT SET"
   }`
 );
 console.log(
-  `Email service: RESEND_FROM is ${resendFrom ? `SET (${resendFrom})` : "NOT SET"
+  `\nEmail service: RESEND_FROM is ${resendFrom ? `SET (${resendFrom})` : "NOT SET"
   }`
 );
 
@@ -60,7 +60,7 @@ export async function sendEmail({
       return false;
     }
 
-    console.log("Email sent successfully:", response.data?.id);
+    console.log("\nEmail sent successfully:", response.data?.id);
     return true;
   } catch (err) {
     console.error("Unexpected email error:", err);

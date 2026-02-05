@@ -145,10 +145,13 @@ const MyFocusTaskItem = ({
     </div>
 
     <div className="min-w-0 flex-1">
-      <div className="flex justify-between items-start">
-        <p className="font-semibold text-sm md:text-xs text-slate-800 truncate pr-2 leading-tight">
+      <div className="flex justify-between items-start gap-2 "> {/* Added gap-2 for safety */}
+
+        {/* REMOVED 'w-full', ADDED 'min-w-0' to ensure truncation works */}
+        <p className="font-semibold text-sm md:text-xs text-slate-800 truncate leading-tight w-[20vw] overflow-hidden">
           {task.title}
         </p>
+
         <span className={`text-[10px] md:text-[9px] font-bold px-1.5 py-0.5 rounded-md leading-tight shrink-0 ${tag === 'Overdue'
           ? 'text-rose-700 bg-rose-50'
           : 'text-blue-700 bg-blue-50'
@@ -403,7 +406,7 @@ const Dashboard = () => {
 
         {/* --- MAIN CONTENT GRID (Responsive Ratio) --- */}
         {/* Mobile: Stacked, Desktop: 2:1 Ratio */}
-        <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-6 items-start">
 
           {/* 1. Operational Pipeline */}
           <Card className="border-slate-200 shadow-sm h-full flex flex-col bg-white overflow-hidden">

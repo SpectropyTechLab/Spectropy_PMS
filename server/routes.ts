@@ -1003,7 +1003,6 @@ export async function registerRoutes(
       if (!sent) {
         throw new Error("Failed to send email via transport service");
       }
-      console.log(`OTP for ${email}: ${otp}`);
       res.json({ message: "OTP sent successfully" });
     } catch (err) {
       if (err instanceof z.ZodError) {
