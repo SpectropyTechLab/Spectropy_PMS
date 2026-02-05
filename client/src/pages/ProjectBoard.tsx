@@ -1285,7 +1285,7 @@ export default function ProjectBoard() {
                               toast({
                                 title: "Permission denied",
                                 description:
-                                  "You do not have permission to create customers",
+                                  "You do not have permission to create Task",
                                 variant: "destructive",
                               });
                               return;
@@ -1475,7 +1475,7 @@ export default function ProjectBoard() {
                                           }}
                                         >
                                           <Edit className="h-4 w-4 mr-2" />
-                                          Edit Customer
+                                          Edit Task
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
                                           onClick={(e) => handleViewHistory(task, e)}
@@ -1488,7 +1488,7 @@ export default function ProjectBoard() {
                                           data-testid={`button-clone-task-${task.id}`}
                                         >
                                           <Copy className="h-4 w-4 mr-2" />
-                                          Clone Customer
+                                          Clone Task
                                         </DropdownMenuItem>
                                         <DropdownMenuSeparator />
                                         <DropdownMenuItem
@@ -1496,7 +1496,7 @@ export default function ProjectBoard() {
                                           onClick={(e) => handleDeleteTask(task, e)}
                                         >
                                           <Trash2 className="h-4 w-4 mr-2" />
-                                          Delete Customer
+                                          Delete Task
                                         </DropdownMenuItem>
                                       </DropdownMenuContent>
                                     </DropdownMenu>
