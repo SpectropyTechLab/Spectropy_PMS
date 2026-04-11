@@ -1,6 +1,13 @@
 import "dotenv/config"
 
-import express, { type Request, Response, NextFunction } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type NextFunction,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -9,6 +16,62 @@ import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
+
+type RouteHandler = RequestHandler | ErrorRequestHandler;
+
+function wrapAsyncHandler(handler: RouteHandler): RouteHandler {
+  if (handler.length === 4) {
+    const errorHandler = handler as ErrorRequestHandler;
+    return ((err, req, res, next) => {
+      Promise.resolve(errorHandler(err, req, res, next)).catch(next);
+    }) as ErrorRequestHandler;
+  }
+
+  const requestHandler = handler as RequestHandler;
+  return ((req, res, next) => {
+    Promise.resolve(requestHandler(req, res, next)).catch(next);
+  }) as RequestHandler;
+}
+
+function wrapHandlerEntry(entry: unknown): unknown {
+  if (Array.isArray(entry)) {
+    return entry.map((item) => wrapHandlerEntry(item));
+  }
+  if (typeof entry !== "function") {
+    return entry;
+  }
+
+  return wrapAsyncHandler(entry as RouteHandler);
+}
+
+function enableAsyncErrorForwarding(expressApp: Express) {
+  const methods = ["use", "get", "post", "put", "patch", "delete"] as const;
+
+  for (const method of methods) {
+    const original = (expressApp[method] as (...args: any[]) => unknown).bind(
+      expressApp,
+    );
+
+    (expressApp as any)[method] = (...args: any[]) => {
+      const [first, ...rest] = args;
+      const hasExplicitPath =
+        typeof first === "string" ||
+        first instanceof RegExp ||
+        (Array.isArray(first) &&
+          first.every(
+            (value) => typeof value === "string" || value instanceof RegExp,
+          ));
+
+      if (hasExplicitPath) {
+        return original(first, ...rest.map((entry) => wrapHandlerEntry(entry)));
+      }
+
+      return original(...args.map((entry) => wrapHandlerEntry(entry)));
+    };
+  }
+}
+
+enableAsyncErrorForwarding(app);
 
 declare module "http" {
   interface IncomingMessage {
@@ -42,7 +105,7 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}\n`);
+  //console.log(`${formattedTime} [${source}] ${message}\n`);
 }
 
 app.use((req, res, next) => {
@@ -94,12 +157,17 @@ app.get("/health", (_req, res) => {
   cleanupDeletedRecords();
   setInterval(cleanupDeletedRecords, 1000 * 60 * 60 * 12);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    console.error("Unhandled application error:", err);
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
     res.status(status).json({ message });
-    throw err;
   });
 
   // importantly only setup vite in development and after

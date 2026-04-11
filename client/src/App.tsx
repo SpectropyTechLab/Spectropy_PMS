@@ -45,7 +45,7 @@ function Router() {
       </Route>
       <Route path="/projects/:id">
         <ProtectedRoute role="Admin">
-          <Layout>
+          <Layout fullWidth>
             <ProjectBoard />
           </Layout>
         </ProtectedRoute>
@@ -103,7 +103,7 @@ function Router() {
       </Route>
       <Route path="/user/projects/:id">
         <ProtectedRoute role="User">
-          <Layout>
+          <Layout fullWidth>
             <ProjectBoard />
           </Layout>
         </ProtectedRoute>

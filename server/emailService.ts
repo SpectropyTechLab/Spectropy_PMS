@@ -1,9 +1,25 @@
-import { Resend } from "resend";
+import { Resend, type ErrorResponse } from "resend";
+
+type EmailFailureReason =
+  | "config_missing"
+  | "rate_limit"
+  | "quota_exceeded"
+  | "api_error"
+  | "unexpected_error";
 
 interface EmailOptions {
   to: string;
   subject: string;
   html: string;
+}
+
+export interface SendEmailResult {
+  ok: boolean;
+  id?: string;
+  reason?: EmailFailureReason;
+  errorCode?: ErrorResponse["name"];
+  statusCode?: number | null;
+  message?: string;
 }
 
 interface TaskNotificationData {
@@ -33,18 +49,59 @@ console.log(
 
 const resend = new Resend(resendApiKey);
 
+function mapResendError(error: ErrorResponse): SendEmailResult {
+  if (error.name === "rate_limit_exceeded") {
+    return {
+      ok: false,
+      reason: "rate_limit",
+      errorCode: error.name,
+      statusCode: error.statusCode,
+      message: error.message,
+    };
+  }
+
+  if (
+    error.name === "daily_quota_exceeded" ||
+    error.name === "monthly_quota_exceeded"
+  ) {
+    return {
+      ok: false,
+      reason: "quota_exceeded",
+      errorCode: error.name,
+      statusCode: error.statusCode,
+      message: error.message,
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "api_error",
+    errorCode: error.name,
+    statusCode: error.statusCode,
+    message: error.message,
+  };
+}
+
+function logEmailLimitMessage(result: SendEmailResult) {
+  if (result.reason === "rate_limit" || result.reason === "quota_exceeded") {
+    console.warn(
+      `[Resend] Email sending limit reached (${result.errorCode}). Other app flows will continue, but email delivery is blocked until the limit resets.`,
+    );
+  }
+}
+
 export async function sendEmail({
   to,
   subject,
   html,
-}: {
-  to: string;
-  subject: string;
-  html: string;
-}): Promise<boolean> {
+}: EmailOptions): Promise<SendEmailResult> {
   if (!resendApiKey || !resendFrom) {
     console.error("Resend env not configured");
-    return false;
+    return {
+      ok: false,
+      reason: "config_missing",
+      message: "Resend environment variables are not configured",
+    };
   }
 
   try {
@@ -57,14 +114,23 @@ export async function sendEmail({
 
     if (response.error) {
       console.error("Resend API error:", response.error);
-      return false;
+      const result = mapResendError(response.error);
+      logEmailLimitMessage(result);
+      return result;
     }
 
     console.log("\nEmail sent successfully:", response.data?.id);
-    return true;
+    return {
+      ok: true,
+      id: response.data?.id,
+    };
   } catch (err) {
     console.error("Unexpected email error:", err);
-    return false;
+    return {
+      ok: false,
+      reason: "unexpected_error",
+      message: err instanceof Error ? err.message : "Unknown email error",
+    };
   }
 }
 

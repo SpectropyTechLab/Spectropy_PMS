@@ -15,6 +15,20 @@ import {
 } from "@shared/schema";
 import { eq, asc, desc, lt } from "drizzle-orm";
 
+export type TaskSummary = Pick<
+  Task,
+  | "id"
+  | "title"
+  | "description"
+  | "status"
+  | "priority"
+  | "projectId"
+  | "bucketId"
+  | "assigneeId"
+  | "assignedUsers"
+  | "dueDate"
+>;
+
 export interface IStorage {
   // Users
   getUsers(): Promise<User[]>;
@@ -40,7 +54,7 @@ export interface IStorage {
   updateBucket(id: number, updates: UpdateBucketRequest): Promise<Bucket>;
   deleteBucket(id: number): Promise<void>;
 
-  // Tasks
+  getTaskSummaries(projectId?: number): Promise<TaskSummary[]>;
   getTasks(projectId?: number): Promise<Task[]>;
   getTasksByBucket(bucketId: number): Promise<Task[]>;
   getTask(id: number): Promise<Task | undefined>;
@@ -196,7 +210,30 @@ export class DatabaseStorage implements IStorage {
     await db.delete(buckets).where(eq(buckets.id, id));
   }
 
-  // Tasks
+  async getTaskSummaries(projectId?: number): Promise<TaskSummary[]> {
+    const baseQuery = db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        description: tasks.description,
+        status: tasks.status,
+        priority: tasks.priority,
+        projectId: tasks.projectId,
+        bucketId: tasks.bucketId,
+        assigneeId: tasks.assigneeId,
+        assignedUsers: tasks.assignedUsers,
+        dueDate: tasks.dueDate,
+      })
+      .from(tasks)
+      .orderBy(asc(tasks.position));
+
+    if (projectId) {
+      return await baseQuery.where(eq(tasks.projectId, projectId));
+    }
+
+    return await baseQuery;
+  }
+
   async getTasks(projectId?: number): Promise<Task[]> {
     if (projectId) {
       return await db.select().from(tasks).where(eq(tasks.projectId, projectId)).orderBy(asc(tasks.position));

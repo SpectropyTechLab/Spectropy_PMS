@@ -15,7 +15,6 @@ declare global {
 
 function getJwtSecret(): string {
   const secret = process.env.AUTH_JWT_SECRET;
-  console.log("\nsecret keys", secret);
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
       throw new Error("AUTH_JWT_SECRET is required in production");

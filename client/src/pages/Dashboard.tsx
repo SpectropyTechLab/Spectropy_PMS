@@ -537,10 +537,12 @@ const Dashboard = () => {
                     <div className="space-y-1.5">
                       <h5 className="text-[10px] uppercase tracking-wider font-bold text-slate-400 pl-1">My Day</h5>
                       {myFocus.today.map((t) => (
-                        <Link key={`today-${t.id}`} href={`/todo?taskId=${t.id}`}>
-                          <a className="block">
-                            <MyFocusTaskItem task={t} tag="My Day" />
-                          </a>
+                        <Link
+                          key={`today-${t.id}`}
+                          href={`/todo?taskId=${t.id}`}
+                          className="block"
+                        >
+                          <MyFocusTaskItem task={t} tag="My Day" />
                         </Link>
                       ))}
                     </div>
@@ -551,10 +553,12 @@ const Dashboard = () => {
                     <div className="space-y-1.5">
                       <h5 className="text-[10px] uppercase tracking-wider font-bold text-slate-400 pl-1">Outstanding</h5>
                       {myFocus.overdue.map((t) => (
-                        <Link key={`overdue-${t.id}`} href={`/todo?taskId=${t.id}`}>
-                          <a className="block">
-                            <MyFocusTaskItem task={t} isOverdue tag="Overdue" />
-                          </a>
+                        <Link
+                          key={`overdue-${t.id}`}
+                          href={`/todo?taskId=${t.id}`}
+                          className="block"
+                        >
+                          <MyFocusTaskItem task={t} isOverdue tag="Overdue" />
                         </Link>
                       ))}
                     </div>

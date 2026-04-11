@@ -57,6 +57,12 @@ function createHistoryEntry(
   };
 }
 
+function getStatusHistoryAction(status: string) {
+  if (status === "completed") return "Marked as completed";
+  if (status === "in_progress") return "Started";
+  return `Moved to ${status}`;
+}
+
 async function getProjectAndBucketNames(
   projectId?: number | null,
   bucketId?: number | null,
@@ -372,7 +378,10 @@ export async function registerRoutes(
     const assigneeId = req.query.assigneeId
       ? Number(req.query.assigneeId)
       : undefined;
-    let tasks = await storage.getTasks(projectId);
+    const summary = req.query.summary === "1";
+    let tasks = summary
+      ? await storage.getTaskSummaries(projectId)
+      : await storage.getTasks(projectId);
     if (assigneeId) {
       tasks = tasks.filter((task) => task.assigneeId === assigneeId);
     }
@@ -423,7 +432,12 @@ export async function registerRoutes(
               dueDate: task.dueDate,
             });
 
-            sent = await sendEmail({ to: assignee.email, subject, html });
+            const emailResult = await sendEmail({
+              to: assignee.email,
+              subject,
+              html,
+            });
+            sent = emailResult.ok;
           }
 
           await storage.createNotification({
@@ -472,7 +486,20 @@ export async function registerRoutes(
         }
       }
 
-      const task = await storage.updateTask(Number(req.params.id), input);
+      const task = await storage.updateTask(Number(req.params.id), {
+        ...input,
+        ...(input.history === undefined && input.status && existingTask
+          ? {
+              history: [
+                ...(existingTask.history || []),
+                createHistoryEntry(
+                  getStatusHistoryAction(input.status),
+                  currentUser,
+                ),
+              ],
+            }
+          : {}),
+      });
       const project = await storage.getProject(task.projectId);
 
       if (project) {
@@ -494,11 +521,12 @@ export async function registerRoutes(
                 assigneeName: assignee?.name || "Unknown",
               });
 
-              sent = await sendEmail({
+              const emailResult = await sendEmail({
                 to: projectOwner.email,
                 subject,
                 html,
               });
+              sent = emailResult.ok;
             }
 
             await storage.createNotification({
@@ -522,7 +550,12 @@ export async function registerRoutes(
                 dueDate: task.dueDate,
               });
 
-              sent = await sendEmail({ to: assignee.email, subject, html });
+              const emailResult = await sendEmail({
+                to: assignee.email,
+                subject,
+                html,
+              });
+              sent = emailResult.ok;
             }
 
             await storage.createNotification({
@@ -551,7 +584,12 @@ export async function registerRoutes(
                 status: task.status,
               });
 
-              sent = await sendEmail({ to: user.email, subject, html });
+              const emailResult = await sendEmail({
+                to: user.email,
+                subject,
+                html,
+              });
+              sent = emailResult.ok;
             }
 
             await storage.createNotification({
@@ -994,13 +1032,13 @@ export async function registerRoutes(
         </div>
       `;
 
-      const sent = await sendEmail({
+      const emailResult = await sendEmail({
         to: email,
         subject: emailSubject,
         html: emailHtml,
       });
 
-      if (!sent) {
+      if (!emailResult.ok) {
         throw new Error("Failed to send email via transport service");
       }
       res.json({ message: "OTP sent successfully" });
@@ -1588,8 +1626,12 @@ export async function registerRoutes(
     }
   });
 
-  // Seed data
-  seedDatabase();
+  // Seed data without allowing startup seeding issues to crash the process.
+  try {
+    await seedDatabase();
+  } catch (err) {
+    console.error("Failed to seed initial data:", err);
+  }
 
   return httpServer;
 }

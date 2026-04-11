@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,10 +29,25 @@ import {
   Eye,
   Loader2,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Task, Bucket, Project, User } from "@shared/schema";
+
+type AdminTaskListItem = Pick<
+  Task,
+  | "id"
+  | "title"
+  | "description"
+  | "status"
+  | "priority"
+  | "projectId"
+  | "bucketId"
+  | "assigneeId"
+  | "assignedUsers"
+  | "dueDate"
+>;
 
 export default function AdminTasks() {
   const [, navigate] = useLocation();
@@ -43,8 +57,12 @@ export default function AdminTasks() {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
 
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
-    queryKey: ["/api/tasks"],
+  const { data: tasks = [], isLoading: tasksLoading } = useQuery<AdminTaskListItem[]>({
+    queryKey: ["/api/tasks", "summary"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/tasks?summary=1");
+      return res.json();
+    },
   });
 
   const { data: buckets = [] } = useQuery<Bucket[]>({
@@ -69,6 +87,7 @@ export default function AdminTasks() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks", "summary"] });
       toast({
         title: "Task updated",
         description: "Task status has been updated successfully.",
@@ -83,52 +102,61 @@ export default function AdminTasks() {
     },
   });
 
-  const filteredTasks = tasks.filter((task) => {
-    const projectMatch =
-      projectFilter === "all" || task.projectId === Number(projectFilter);
-    const statusMatch = statusFilter === "all" || task.status === statusFilter;
-    const priorityMatch =
-      priorityFilter === "all" || task.priority === priorityFilter;
-    const assigneeMatch =
-      assigneeFilter === "all" ||
-      task.assigneeId === Number(assigneeFilter) ||
-      task.assignedUsers?.includes(Number(assigneeFilter));
-    return projectMatch && statusMatch && priorityMatch && assigneeMatch;
-  });
+  const bucketNameById = useMemo(
+    () => new Map(buckets.map((bucket) => [bucket.id, bucket.title])),
+    [buckets],
+  );
+  const projectNameById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  );
+  const userById = useMemo(
+    () => new Map(users.map((user) => [user.id, user])),
+    [users],
+  );
+
+  const filteredTasks = useMemo(
+    () =>
+      tasks.filter((task) => {
+        const projectMatch =
+          projectFilter === "all" || task.projectId === Number(projectFilter);
+        const statusMatch = statusFilter === "all" || task.status === statusFilter;
+        const priorityMatch =
+          priorityFilter === "all" || task.priority === priorityFilter;
+        const assigneeMatch =
+          assigneeFilter === "all" ||
+          task.assigneeId === Number(assigneeFilter) ||
+          task.assignedUsers?.includes(Number(assigneeFilter));
+        return projectMatch && statusMatch && priorityMatch && assigneeMatch;
+      }),
+    [tasks, projectFilter, statusFilter, priorityFilter, assigneeFilter],
+  );
 
   const getBucketName = (bucketId: number | null) => {
     if (!bucketId) return "-";
-    const bucket = buckets.find((b) => b.id === bucketId);
-    return bucket?.title || "-";
+    return bucketNameById.get(bucketId) || "-";
   };
 
   const getProjectName = (projectId: number | null) => {
     if (!projectId) return "-";
-    const project = projects.find((p) => p.id === projectId);
-    return project?.name || "-";
+    return projectNameById.get(projectId) || "-";
   };
 
-  const getAssignees = (task: Task) => {
+  const getAssignees = (task: AdminTaskListItem) => {
     const assigneeIds = task.assignedUsers?.length
       ? task.assignedUsers
       : task.assigneeId
         ? [task.assigneeId]
         : [];
-    return users.filter((u) => assigneeIds.includes(u.id));
+    return assigneeIds
+      .map((id) => userById.get(id))
+      .filter((user): user is User => Boolean(user));
   };
 
-  const handleStatusChange = (task: Task, newStatus: string) => {
-    const historyEntry =
-      newStatus === "completed"
-        ? `Marked as completed on ${new Date().toLocaleDateString()}`
-        : newStatus === "in_progress"
-          ? `Started on ${new Date().toLocaleDateString()}`
-          : `Moved to ${newStatus} on ${new Date().toLocaleDateString()}`;
-
+  const handleStatusChange = (task: AdminTaskListItem, newStatus: string) => {
     updateTaskMutation.mutate({
       id: task.id,
       status: newStatus,
-      history: [...(task.history || []), historyEntry],
     });
   };
 
@@ -167,9 +195,19 @@ export default function AdminTasks() {
     }
   };
 
-  const completedCount = tasks.filter((t) => t.status === "completed").length;
-  const inProgressCount = tasks.filter((t) => t.status === "in_progress").length;
-  const todoCount = tasks.filter((t) => t.status === "todo").length;
+  const { completedCount, inProgressCount, todoCount } = useMemo(
+    () =>
+      tasks.reduce(
+        (counts, task) => {
+          if (task.status === "completed") counts.completedCount += 1;
+          else if (task.status === "in_progress") counts.inProgressCount += 1;
+          else counts.todoCount += 1;
+          return counts;
+        },
+        { completedCount: 0, inProgressCount: 0, todoCount: 0 },
+      ),
+    [tasks],
+  );
 
   if (tasksLoading) {
     return (
@@ -441,6 +479,7 @@ export default function AdminTasks() {
               </Table>
             </div>
           )}
+
         </CardContent>
       </Card>
     </div>
